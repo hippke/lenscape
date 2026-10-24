@@ -115,6 +115,7 @@ Jupyter notebooks in [`notebooks/`](notebooks), each runnable in minutes:
 | [07 Higher order](notebooks/07_higher_order.ipynb) | parallax, orbital motion, binary sources |
 | [08 MCMC](notebooks/08_mcmc.ipynb) | posteriors |
 | [09 Physical parameters](notebooks/09_physical_parameters.ipynb) | source radius, Einstein radius, proper motion |
+| [10 Caustic crossings](notebooks/10_caustic_crossings.ipynb) | starting points from the caustic entry and exit times |
 | [Han et al. 2025](notebooks/han2025_figures.ipynb) | Figures 1–7 of a published paper, redrawn with lenscape |
 
 ## Documentation

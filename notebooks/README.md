@@ -14,6 +14,7 @@ Data are downloaded on first use from the public KMTNet archive and cached in `~
 | `07_higher_order` | parallax, ecliptic degeneracy, orbital motion, binary source | 23 s |
 | `08_mcmc` | posteriors with the ensemble sampler | 12 s |
 | `09_physical_parameters` | source radius, Einstein radius, proper motion | 1 s |
+| `10_caustic_crossings` | fits from rough starts with caustic-crossing starting points (simulated event, MOA-2022-BLG-091) | 1 min |
 | `han2025_figures` | Han et al. (2025) Figures 1–7 redrawn with lenscape (`han2025.py` rebuilds the data) | 30 s |
 
 \* Measured on a 16-core AMD Ryzen 9 7950X, data already downloaded; the first notebook also compiles the

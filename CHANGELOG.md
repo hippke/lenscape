@@ -15,4 +15,4 @@ First public version.
 - Annual parallax and linear orbital motion, MCMC (affine-invariant ensemble), source radius and Einstein radius.
 - Figures: model light curves with residuals and insets, caustics and source trajectories, Δχ² maps.
 - Data: KMTNet archive and arXiv downloads (`datasets`), data points from vector figures (`eps`).
-- Tutorials: nine notebooks and a reproduction of Han et al. (2025), Figures 1–7.
+- Tutorials: ten notebooks and a reproduction of Han et al. (2025), Figures 1–7.

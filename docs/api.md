@@ -123,9 +123,11 @@ with `x = (t0, u0, tE, alpha, log rho)`. `warm`: extra start vectors (e.g. neigh
 **Caustic-crossing starts.** For events with resolved caustic crossings, `cfg["caustic_crossings"] = (t_in, t_out)`
 adds starting points built from the crossing times (the caustic-crossing parameterisation of Cassan 2008): every
 pair of points on the caustics of (s, q) fixes a trajectory that is on the caustic at both times. The best
-`cfg["n_caustic"]` (default 4) of these, by χ², are fitted along with the angle screen (`cfg["caustic_only"] = True`
-drops the screen). From a rough start this finds solutions the angle screen misses; from a good start (e.g. in maps,
-which start from the best fit) it helps less and doubles the cost of a fit, so it is off by default.
+candidates are refined by moving their entry and exit points along the caustic (`cfg["caustic_refine"]`, default
+on), and the best `cfg["n_caustic"]` (default 4) are fitted along with the angle screen (`cfg["caustic_only"] = True`
+drops the screen). From a rough start this finds solutions the angle screen misses; from the event's best fit (as in maps) it
+still finds the best solution at a lattice point more often (MOA-2022-BLG-091: 26/40 instead of 18/40 points within
+Δχ² < 1 of the best known), at 2.7× the cost of a fit, so it is off by default. See notebook 10.
 `fit.caustic_starts(ls, lq, crossings, logrho, n=24)` returns the candidate vectors.
 
 ### `fit_point_box(box, data, cfg, warm=None)`

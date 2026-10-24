@@ -72,47 +72,91 @@ def screen_alphas(f, k, seed=None):
     return [starts[i] for i in np.argsort(c)[:k]]
 
 
-def caustic_starts(ls, lq, crossings, logrho=-3.0, n=24):
-    """Start vectors (t0, u0, tE, alpha, log rho) of straight trajectories that enter the caustics of (s, q) at
-    crossings[0] and leave them at crossings[1] (caustic-crossing parameterisation, Cassan 2008; MulensModel's
-    uniform caustic sampling): every ordered pair of points (z_in, z_out), n points per caustic sampled uniformly in
-    arc length on the same caustic, fixes the direction (alpha), the impact parameter (u0), the timescale
-    tE = (t_out - t_in) / |z_out - z_in| and t0. Frame and trajectory as in model.lc / caustics.trajectory."""
+def _caustic_curves(ls, lq):
+    """Caustics of (s, q) as (points, cumulative arc length) per closed curve."""
     from . import caustics as K
-    t_in, t_out = float(crossings[0]), float(crossings[1])
     out = []
     for c in K.caustics(10.0 ** ls, 10.0 ** lq, 4000):
         z = c[:-1]
-        arc = np.r_[0.0, np.cumsum(np.abs(np.diff(z)))]
-        pts = np.interp(np.linspace(0, arc[-1], n, endpoint=False), arc, z.real) + \
-            1j * np.interp(np.linspace(0, arc[-1], n, endpoint=False), arc, z.imag)
-        for a in range(n):
-            for b in range(n):
-                if a == b:
-                    continue
-                dz = pts[b] - pts[a]
-                L = abs(dz)
-                if L < 1e-6:
-                    continue
-                d = dz / L                                     # direction of motion = (-cos alpha, -sin alpha)
-                al = np.arctan2(-d.imag, -d.real)
-                nvec = complex(np.sin(al), -np.cos(al))         # y(tau) = u0 n + tau d
-                u0 = pts[a].real * nvec.real + pts[a].imag * nvec.imag
-                tau_in = pts[a].real * d.real + pts[a].imag * d.imag
-                tE = (t_out - t_in) / L
-                out.append(np.array([t_in - tau_in * tE, u0, tE, np.mod(al, 2 * np.pi), logrho]))
+        out.append((c, np.r_[0.0, np.cumsum(np.abs(np.diff(c)))]))
     return out
 
 
-def screen_caustic(fx, ls, lq, crossings, k, logrho=-3.0, n=24):
+def _on_caustic(curve, a):
+    """Point at arc position a (periodic) on a closed caustic curve."""
+    c, arc = curve
+    a = np.mod(a, arc[-1])
+    return complex(np.interp(a, arc, c.real), np.interp(a, arc, c.imag))
+
+
+def _chord(z_in, z_out, t_in, t_out, logrho):
+    """(t0, u0, tE, alpha, log rho) of the straight trajectory on z_in at t_in and on z_out at t_out."""
+    dz = z_out - z_in
+    L = abs(dz)
+    if L < 1e-9:
+        return None
+    d = dz / L                                         # direction of motion = (-cos alpha, -sin alpha)
+    al = np.arctan2(-d.imag, -d.real)
+    u0 = z_in.real * np.sin(al) - z_in.imag * np.cos(al)   # y(tau) = u0 (sin a, -cos a) + tau d
+    tau_in = z_in.real * d.real + z_in.imag * d.imag
+    tE = (t_out - t_in) / L
+    return np.array([t_in - tau_in * tE, u0, tE, np.mod(al, 2 * np.pi), logrho])
+
+
+def caustic_starts(ls, lq, crossings, logrho=-3.0, n=24, with_arcs=False):
+    """Start vectors (t0, u0, tE, alpha, log rho) of straight trajectories that are on the caustics of (s, q) at
+    crossings[0] (entry) and crossings[1] (exit): the caustic-crossing parameterisation (Cassan 2008; MulensModel's
+    uniform caustic sampling). Every ordered pair of n points per caustic, uniform in arc length on the same
+    caustic, fixes alpha, u0, tE = (t_out - t_in) / |z_out - z_in| and t0. with_arcs: also return
+    (curve index, arc_in, arc_out) for each vector (see screen_caustic). Frame as in model.lc."""
+    t_in, t_out = float(crossings[0]), float(crossings[1])
+    out, arcs = [], []
+    for ci, curve in enumerate(_caustic_curves(ls, lq)):
+        pos = np.linspace(0, curve[1][-1], n, endpoint=False)
+        pts = [_on_caustic(curve, a) for a in pos]
+        for a in range(n):
+            for b in range(n):
+                if a != b:
+                    x = _chord(pts[a], pts[b], t_in, t_out, logrho)
+                    if x is not None:
+                        out.append(x)
+                        arcs.append((ci, pos[a], pos[b]))
+    return (out, arcs) if with_arcs else out
+
+
+def screen_caustic(fx, ls, lq, crossings, k, logrho=-3.0, n=24, refine=True):
     """The k best caustic_starts by chi2 (fx: chi2 of a 5-vector at fixed s, q); several crossing pairs may be
-    given as a list of (t_in, t_out)."""
+    given as a list of (t_in, t_out). refine: the best 2 k candidates are first optimised in their own coordinates,
+    the entry and exit positions along the caustic (two parameters; the trajectory stays on the caustic at the
+    given times), which turns a coarse candidate into an accurate start before the k best are returned."""
     pairs = [crossings] if np.ndim(crossings) == 1 else list(crossings)
-    cand = [x for pr in pairs for x in caustic_starts(ls, lq, pr, logrho, n)]
+    cand, info = [], []
+    for pr in pairs:
+        xs, arcs = caustic_starts(ls, lq, pr, logrho, n, with_arcs=True)
+        cand += xs
+        info += [(pr, a) for a in arcs]
     if not cand or k <= 0:
         return []
     c = np.array([fx(x) for x in cand])
-    return [cand[i] for i in np.argsort(c)[:k]]
+    order = np.argsort(c)
+    if not refine:
+        return [cand[i] for i in order[:k]]
+    curves = _caustic_curves(ls, lq)
+    done = []
+    for i in order[:2 * k]:
+        (t_in, t_out), (ci, a0, b0) = info[i]
+        curve = curves[ci]
+        step = curve[1][-1] / n
+        g = lambda v: (lambda x: fx(x) if x is not None else np.inf)(
+            _chord(_on_caustic(curve, v[0]), _on_caustic(curve, v[1]), float(t_in), float(t_out), logrho))
+        r = minimize(g, [a0, b0], method="Nelder-Mead",
+                     options=dict(maxfev=120, initial_simplex=[[a0, b0], [a0 + 0.5 * step, b0], [a0, b0 + 0.5 * step]],
+                                  xatol=1e-4 * step, fatol=1.0))
+        x = _chord(_on_caustic(curve, r.x[0]), _on_caustic(curve, r.x[1]), float(t_in), float(t_out), logrho)
+        if x is not None:
+            done.append((r.fun, x))
+    done.sort(key=lambda v: v[0])
+    return [x for _, x in done[:k]]
 
 
 def _all_starts(fx, ls, lq, cfg):
@@ -121,7 +165,7 @@ def _all_starts(fx, ls, lq, cfg):
     if cfg.get("caustic_crossings") is not None:
         lr = (cfg.get("seed") or {}).get("logrho", -3.0)
         starts += screen_caustic(fx, ls, lq, cfg["caustic_crossings"], cfg.get("n_caustic", 4), lr,
-                                 cfg.get("caustic_samples", 24))
+                                 cfg.get("caustic_samples", 24), cfg.get("caustic_refine", True))
     return starts
 
 
