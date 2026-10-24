@@ -151,3 +151,56 @@ def plot_geometry(solutions, labels=None, extent=(-0.3, 0.5, -0.2, 0.2), ncols=2
     if path:
         fig.savefig(path, dpi=200, bbox_inches="tight")
     return fig
+
+
+BAND_COLORS = ("#ee7600", "gold", "lawngreen", "#7ec0ee", "royalblue")
+
+
+def plot_map(result, bands=None, ax=None, vmax=100.0, cmap="magma_r", colorbar=True, path=None):
+    """Delta chi2 map of a maps.lattice() result (lattice points) or of maps.refine() cells.
+    bands=None: continuous colour scale log10(Delta chi2 + 1) up to vmax; bands=(4, 8, 12, ...): one colour per
+    band Delta chi2 < edge (orange = best, as in many papers), white above the last edge. Returns the axes."""
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import PatchCollection
+    from matplotlib.colors import ListedColormap, BoundaryNorm, Normalize
+    if ax is None:
+        _, ax = plt.subplots(figsize=(5, 4.2))
+    if bands is None:
+        cm, norm = plt.get_cmap(cmap).copy(), Normalize(0, np.log10(vmax + 1))
+        val = lambda d: np.log10(np.clip(d, 0, None) + 1)
+    else:
+        edges = np.asarray(bands, float)
+        cm = ListedColormap(list(BAND_COLORS[:len(edges)]) + ["white"])
+        norm = BoundaryNorm(np.arange(len(edges) + 2) - 0.5, len(edges) + 1)
+        val = lambda d: np.searchsorted(edges, d, side="right").astype(float)
+    cm.set_bad("white")
+    ref = float(result["chi2_ref"])
+    if np.ndim(result["chi2"]) == 2:                                  # lattice: (ns, nq) at lattice points
+        ls, lq = result["logs"], result["logq"]
+        dls, dlq = ls[1] - ls[0], lq[1] - lq[0]
+        im = ax.imshow(np.ma.masked_invalid(val(result["chi2"] - ref)).T, origin="lower", aspect="auto", cmap=cm,
+                       norm=norm, interpolation="nearest",
+                       extent=(ls[0] - dls / 2, ls[-1] + dls / 2, lq[0] - dlq / 2, lq[-1] + dlq / 2))
+    else:                                                             # refined cells
+        im = PatchCollection([plt.Rectangle((x - hs, y - hq), 2 * hs, 2 * hq) for x, y, hs, hq in
+                              zip(result["logs"], result["logq"], result["hs"], result["hq"])], cmap=cm, norm=norm,
+                             lw=0, antialiased=False)
+        im.set_array(val(np.asarray(result["chi2"]) - ref))
+        ax.add_collection(im)
+        ax.set_xlim(np.min(result["logs"] - result["hs"]), np.max(result["logs"] + result["hs"]))
+        ax.set_ylim(np.min(result["logq"] - result["hq"]), np.max(result["logq"] + result["hq"]))
+    ax.set_xlabel(r"$\log s$")
+    ax.set_ylabel(r"$\log q$")
+    if colorbar:
+        cb = ax.figure.colorbar(im, ax=ax)
+        if bands is None:
+            ticks = [t for t in (0, 1, 4, 10, 30, 100, 300, 1000) if t <= vmax]
+            cb.set_ticks(np.log10(np.array(ticks) + 1)); cb.set_ticklabels([str(t) for t in ticks])
+            cb.set_label(r"$\Delta\chi^2$")
+        else:
+            cb.set_ticks(range(len(bands) + 1))
+            cb.set_ticklabels([f"< {b:g}" for b in bands] + ["above"])
+            cb.set_label(r"$\Delta\chi^2$ band")
+    if path:
+        ax.figure.savefig(path, dpi=200, bbox_inches="tight")
+    return ax

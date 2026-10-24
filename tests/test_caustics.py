@@ -55,3 +55,18 @@ def test_figures_render(tmp_path):
     FG.plot_lightcurve(be, [p, p], d, insets=[(-1, 1)], path=tmp_path / "lc.png")
     FG.plot_geometry([p], ncols=1, mirror=True, path=tmp_path / "geo.png")
     assert (tmp_path / "lc.png").stat().st_size > 0 and (tmp_path / "geo.png").stat().st_size > 0
+
+
+def test_plot_map_lattice_and_cells(tmp_path):
+    import matplotlib
+    matplotlib.use("Agg")
+    from lenscape import figures as FG
+    ls, lq = np.linspace(-0.1, 0.1, 5), np.linspace(-3, -2, 4)
+    chi = 100 + 50 * (ls[:, None] ** 2 * 100 + (lq[None, :] + 2.5) ** 2)
+    res = dict(logs=ls, logq=lq, chi2=chi, chi2_ref=chi.min())
+    FG.plot_map(res, path=tmp_path / "a.png")
+    FG.plot_map(res, bands=(4, 8, 12), path=tmp_path / "b.png")
+    cells = dict(logs=np.repeat(ls, 4), logq=np.tile(lq, 5), hs=np.full(20, 0.025), hq=np.full(20, 0.125),
+                 chi2=chi.ravel(), chi2_ref=chi.min())
+    FG.plot_map(cells, path=tmp_path / "c.png")
+    assert all((tmp_path / n).stat().st_size > 0 for n in ("a.png", "b.png", "c.png"))

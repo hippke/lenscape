@@ -8,3 +8,4 @@ dist/
 .ipynb_checkpoints/
 *.npz
 !tests/data/*.npz
+!notebooks/data/*.npz

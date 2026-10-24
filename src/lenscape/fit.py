@@ -230,3 +230,27 @@ def fit_point(ls, lq, data, cfg, warm=None):
             warm = None
         return STRATEGIES[strat](ls, lq, data, cfg, warm)
     return STRATEGIES[strat](ls, lq, data, cfg)
+
+
+def fit_full(data, p0, backend=None, rounds=3, maxfev=6000):
+    """Best fit of all seven parameters (t0, u0, tE, log s, log q, alpha, log rho) from the start p0: Nelder-Mead,
+    restarted `rounds` times. backend: a backend or a settings dict (default config.REFINE_BACKEND).
+    Returns (chi2, p). For a new event, find p0 with a map (maps.lattice) or with fit_point at a few (s, q)."""
+    from . import config
+    be = make_backend(backend or config.REFINE_BACKEND) if backend is None or isinstance(backend, dict) else backend
+    p = np.asarray(p0, float)
+    f = lambda x: model.chi2(be, x, data)
+    r = None
+    for _ in range(rounds):
+        r = minimize(f, p, method="Nelder-Mead", options=dict(maxfev=maxfev, xatol=1e-8, fatol=1e-3, adaptive=True))
+        p = r.x
+    return float(r.fun), p
+
+
+def error_factors(data, p, backend=None):
+    """Error-bar factor per data set, k = sqrt(chi2_set / N_set) at the solution p (fluxes solved per set);
+    data.scale_errors(k) then gives chi2/N = 1 per set, the usual normalisation before a map or MCMC."""
+    from . import config
+    be = make_backend(backend or config.REFINE_BACKEND) if backend is None or isinstance(backend, dict) else backend
+    r = model.residuals(be, np.asarray(p, float), data)
+    return {name: float(np.sqrt(np.mean(r[data.idx == k] ** 2))) for k, name in enumerate(data.names)}

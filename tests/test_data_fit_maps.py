@@ -85,3 +85,25 @@ def test_small_map_and_refinement():
     assert (i, j) == (1, 1) and r["chi2"][1, 1] < len(d) + 5 * np.sqrt(2 * len(d))
     a = maps.refine(r, d, levels=1, best=TRUE, workers=2, log=lambda *a: None)
     assert a["chi2"].min() <= r["chi2_ref"] + 1e-9 and a["level"].max() == 1
+
+
+def test_fit_full_and_error_factors():
+    d = synthetic()
+    c, p = F.fit_full(d, TRUE + np.array([0.05, 0.005, 1.0, 0.002, 0.02, 0.01, 0.1]), rounds=2)
+    assert c < len(d) + 5 * np.sqrt(2 * len(d)) and abs(p[2] - TRUE[2]) < 1.0
+    k = F.error_factors(d.scale_errors({"T1": 0.5, "T2": 1.0}), p)
+    assert 1.6 < k["T1"] < 2.4 and 0.8 < k["T2"] < 1.2                    # errors halved -> factor ~2
+
+
+@pytest.mark.slow
+def test_densify_and_alpha_minima():
+    """A 2x finer lattice from a coarse one (no new cell fits) and the trajectory-angle minima of a lattice."""
+    d = synthetic(n=60, efac=4.0)
+    coarse = maps.lattice(d, TRUE[3] + np.array([-0.03, 0.03]), TRUE[4] + np.array([-0.15, 0.15]), best=TRUE,
+                          workers=2, log=lambda *a: None)
+    fine = maps.densify([coarse], d, TRUE[3] + np.array([-0.03, 0.0, 0.03]), TRUE[4] + np.array([-0.15, 0.0, 0.15]),
+                        best=TRUE, workers=2, log=lambda *a: None)
+    assert np.unravel_index(np.nanargmin(fine["chi2"]), (3, 3)) == (1, 1)
+    m = maps.alpha_minima(fine, d, best=TRUE, workers=2, n_alpha=8, log=lambda *a: None)
+    at_true = m[(np.abs(m[:, 0] - TRUE[3]) < 1e-9) & (np.abs(m[:, 1] - TRUE[4]) < 1e-9)]
+    assert len(at_true) >= 1 and np.min(at_true[:, 2]) <= fine["chi2"][1, 1] + 1.0

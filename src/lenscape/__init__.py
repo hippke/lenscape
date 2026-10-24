@@ -43,7 +43,7 @@ if not _os.environ.get("NUMBA_CACHE_DIR"):
 
 __version__ = "0.1.0"
 
-from . import config, data, model, fit, grid, amr, maps, caustics, figures, single, lightcurve, mcmc, source  # noqa: E402
+from . import config, data, model, fit, grid, amr, maps, caustics, figures, single, lightcurve, mcmc, source, datasets, eps  # noqa: E402
 from .data import Data, read_pysis, read_text                                                              # noqa: E402
 from .maps import lattice, refine                                                                          # noqa: E402
-from .fit import make_backend, seed_from_data                                                              # noqa: E402
+from .fit import make_backend, seed_from_data, fit_full, error_factors                                       # noqa: E402

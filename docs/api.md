@@ -1,7 +1,8 @@
 # API reference
 
 `import lenscape` gives the submodules below and, at top level, the most common functions:
-`Data`, `read_pysis`, `read_text`, `lattice`, `refine`, `make_backend`, `seed_from_data`.
+`Data`, `read_pysis`, `read_text`, `lattice`, `refine`, `make_backend`, `seed_from_data`, `fit_full`,
+`error_factors`.
 
 ## Conventions
 
@@ -95,6 +96,20 @@ size). Starts from `result = lattice(...)`. Each cell holds the best fit anywher
 cell). Returns the leaves as a dict of arrays: `logs`, `logq` (cell centres), `hs`, `hq` (half widths), `chi2`,
 `x` (best fit: t0, u0, tE, alpha, log rho, log s, log q), `level`, `chi2_ref`, `nfit`, `wall`.
 
+### `densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_starts=3, max_sweeps=30)`
+A (finer) lattice started from known solutions: every point is fitted from the nearest solutions of `previous`
+(a list of `lattice`, `refine` or `densify` results; the nearest one is always included), then neighbour refinement
+and outlier recalculation. No seed grid and no cell fits: a 2× finer map of a 50 × 49 lattice (9603 points) took
+27 minutes on a 16-core desktop CPU.
+
+### `polish(result, data, previous=(), best=None, cfg=None, workers=None, max_sweeps=30)`
+Improves a result: at points shared with `previous` lattices it keeps the better solution, then runs neighbour
+refinement and outlier recalculation again.
+
+### `alpha_minima(result, data, best=None, cfg=None, workers=None, n_alpha=20, tol_alpha=0.02)`
+All local minima in the trajectory angle at every lattice point (fits from `n_alpha` angles, distinct minima kept):
+rows of (log s, log q, χ², t0, u0, tE, α, log ρ). This is how (log s, α) maps are usually drawn.
+
 ---
 
 ## `lenscape.fit` — fits
@@ -111,6 +126,14 @@ Returns `(chi2, x)` with the 7-vector `x = (t0, u0, tE, alpha, log rho, log s, l
 
 ### `fit_point_heavy(ls, lq, data, cfg, warm=None)`
 Deep search at fixed (s, q) from about 1000 diverse starts (used for the outlier recalculation).
+
+### `fit_full(data, p0, backend=None, rounds=3, maxfev=6000)`
+Best fit of all seven parameters from the start `p0` (Nelder–Mead, restarted `rounds` times; default backend
+`config.REFINE_BACKEND`). Returns `(chi2, p)`.
+
+### `error_factors(data, p, backend=None)`
+Error-bar factor per data set, k = √(χ²_set / N_set) at the solution `p`: `data.scale_errors(error_factors(data, p))`
+gives χ²/N = 1 per set.
 
 ### `seed_from_data(data, u0=0.05, tE=20.0, logrho=-3.0)`
 Rough start vector `dict(t0, u0, tE, logrho)` with t0 at the brightest point. Fits screen the trajectory angle,
@@ -162,8 +185,14 @@ panel per solution. All data sets are put on the magnitude scale of set `ref` wi
 One panel per solution: caustics, source trajectory with direction arrow, lens positions and equal-magnification
 contours. `centre="primary"` puts the origin at the primary, `"com"` at the centre of mass.
 
+### `plot_map(result, bands=None, ax=None, vmax=100.0, cmap="magma_r", colorbar=True, path=None)`
+Δχ² map of a `lattice()` result or of `refine()` cells: continuous (log scale up to `vmax`) or, with
+`bands=(4, 16, 36, ...)`, in colour bands (orange = best, white above the last edge).
+
 ### `aligned(backend, p, data, ref=0, zp=22.0)`, `model_mag(backend, p, t, fs_ref, fb_ref, zp=22.0)`
-Data magnitudes on a common scale, and model magnitudes, for your own plots.
+Data magnitudes on a common scale and model magnitudes, for your own plots: `aligned` returns
+`(mag, err, fs_ref, fb_ref)`. Difference-imaging data with a negative source flux are shown as the magnified
+source alone (blend set to zero).
 
 ---
 
@@ -202,6 +231,24 @@ Data magnitudes on a common scale, and model magnitudes, for your own plots.
 - `deredden`, `theta_star`, `einstein` — the individual steps.
 
 ---
+
+## `lenscape.datasets` — public data
+
+- `kmtnet(event, band="I", window=None, t_offset=2450000.0)` — KMTNet pySIS photometry of an event from the KMTNet
+  archive, e.g. `kmtnet("KMT-2022-BLG-0114")`; downloaded once and cached (`$LENSCAPE_DATA` or
+  `~/.cache/lenscape/data`). Please acknowledge KMTNet when you use these data.
+- `arxiv_source(arxiv_id)` — download and extract a paper's arXiv source; returns its directory.
+
+## `lenscape.eps` — data from vector figures
+
+Many microlensing papers publish their figures as EPS vector graphics, which store every plotted point.
+- `subpaths(path)` — all subpaths with their colours.
+- `markers(subs, size=(5, 30))`, `error_bars(subs)` — filled markers and vertical error-bar segments.
+- `calibrate(d1, v1, d2, v2)` — linear map from device units to data units (from two frame or tick positions).
+- `points_with_errors(subs, x_map, y_map, region, colours)` — `(name, x, y, error)` for every marker of the given
+  colours inside a panel.
+
+See `notebooks/han2025.py` for a complete example.
 
 ## Lower level
 

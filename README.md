@@ -30,11 +30,11 @@ inside them, and the map is refined along the Δχ² contours. A full map of a p
 - **One process per fit, on all cores.** A fit that fails cannot take a map down with it.
 
 Light curves, 1000 points, five binary-lens configurations, one thread (`benchmarks/benchmark.py`; errors against
-VBBinaryLensing at Tol = 10⁻⁵; Intel Core i5-13500 under load):
+VBBinaryLensing at Tol = 10⁻⁵; AMD Ryzen 9 7950X, idle):
 
 | | VBBinaryLensing (Tol 10⁻³) | lenscape (tight settings) | speed-up |
 |---|---|---|---|
-| total time, 5 light curves | 40.5 ms | 8.6 ms | **4.7×** |
+| total time, 5 light curves | 21.6 ms | 4.6 ms | **4.7×** |
 | largest relative error | 1.4 × 10⁻⁴ | 1.0 × 10⁻⁴ | |
 
 Maps (per lattice point, including the fits):
@@ -100,11 +100,32 @@ figures.plot_lightcurve(backend, [best], data, window=(9652, 9663), insets=[(965
 figures.plot_geometry([best], path="geometry.png")    # caustics, trajectory, magnification contours
 ```
 
+## Tutorials
+
+Jupyter notebooks in [`notebooks/`](notebooks), each runnable in minutes:
+
+| notebook | content |
+|---|---|
+| [01 Quickstart](notebooks/01_quickstart.ipynb) | public data → fit → map → figures |
+| [02 Data](notebooks/02_data.ipynb) | loading, cuts, error bars, outliers |
+| [03 Magnifications](notebooks/03_magnification.ipynb) | backends, finite source, limb darkening, accuracy |
+| [04 Caustics](notebooks/04_caustics.ipynb) | caustic topologies, magnification maps, geometry plots |
+| [05 Fitting](notebooks/05_fitting.ipynb) | fits at fixed (s, q), full fits, cell fits, light-curve figures |
+| [06 Maps](notebooks/06_maps.ipynb) | Δχ² maps step by step, refinement, the trajectory angle |
+| [07 Higher order](notebooks/07_higher_order.ipynb) | parallax, orbital motion, binary sources |
+| [08 MCMC](notebooks/08_mcmc.ipynb) | posteriors |
+| [09 Physical parameters](notebooks/09_physical_parameters.ipynb) | source radius, Einstein radius, proper motion |
+| [Han et al. 2025](notebooks/han2025_figures.ipynb) | Figures 1–7 of a published paper, redrawn with lenscape |
+
 ## Documentation
 
 - [Method](docs/method.md): magnifications, fits, the stages of a map, accuracy.
 - [API reference](docs/api.md): all public functions.
 - [Validation](docs/validation.md): comparisons with VBBinaryLensing and with a published map.
+
+## Contributing
+
+All my repositories embrace collaboration between humans and AI. Contributions are welcome, whether they are written by you, by an AI assistant, or by both together, and they will be handled promptly. Please open an [issue](https://github.com/hippke/pizzetti/issues) or a pull request.
 
 ## Citing
 
