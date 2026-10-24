@@ -261,3 +261,131 @@ def alpha_minima(result, data, best=None, cfg=None, workers=None, n_alpha=20, to
     res, _ = G.run_isolated(_alpha_minima_point, tasks, workers, log=log, desc="alpha minima")
     rows = [(logs[i], logq[j], c, *x) for (i, j), v in res.items() if v for c, x in v]
     return np.array(rows, float).reshape(-1, 8)
+
+
+# ---------------------------------------------------------------------------------------------- (log s, alpha) maps
+def _sa_vector(y, ls, al):
+    """(t0, t_eff, ln tE, log q, log t_*) at fixed (log s, alpha) -> the 7-vector (t0, u0, tE, log s, log q, alpha,
+    log rho)."""
+    t0, te, ltE, lq, lts = y
+    tE = np.exp(ltE)
+    return np.array([t0, te / tE, tE, ls, lq, al, lts - np.log10(tE)])
+
+
+def _sa_coords(p):
+    t0, u0, tE = p[0], p[1], abs(p[2]) + 1e-3
+    return np.array([t0, u0 * tE, np.log(tE), p[4], p[6] + np.log10(tE)])
+
+
+def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0):
+    """Best fit at fixed (log s, alpha) from 7-vector starts (their log s and alpha are replaced). cand/cval: in
+    refinement sweeps, refit only if a start already beats cval - margin with one chi2 evaluation."""
+    be = F.make_backend(cfg["grid_backend"])
+    f = lambda y: M.chi2(be, _sa_vector(y, ls, al), G._DATA)
+    ys = [_sa_coords(np.asarray(s, float)) for s in starts]
+    if cand is not None:
+        ys = [y for y in ys if f(y) < cval - margin]
+        if not ys:
+            return None
+    best = (np.inf, None)
+    for y in ys:
+        c = f(y)
+        for step in (0.3, 0.1):
+            st = np.array([0.05, 0.1 * abs(y[1]) + 1e-3, 0.1, 0.1, 0.1]) * step
+            sim = np.vstack([y] + [y + np.eye(5)[k] * st[k] for k in range(5)])
+            r = minimize(f, y, method="Nelder-Mead", options=dict(maxfev=1000, adaptive=True, initial_simplex=sim,
+                                                                 fatol=1e-2))
+            if r.fun < c:
+                c, y = r.fun, r.x
+        if c < best[0]:
+            best = (c, _sa_vector(y, ls, al))
+    return best
+
+
+def _plot_alpha(p, u0_ref):
+    """alpha as drawn in (log s, alpha) panels: a solution with the opposite sign of u0 counts at alpha + pi."""
+    return np.mod(p[5] + (np.pi if np.sign(p[1]) != np.sign(u0_ref) else 0.0), 2 * np.pi)
+
+
+def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=None, n_starts=3, margin=1.0,
+                  max_sweeps=30, bin_wings=True, log=print):
+    """Profile chi2 over (log s, alpha): at every grid point, chi2 minimised over all other parameters including
+    log q, so the map has a value everywhere (unlike a projection of lattice solutions). alpha is in the convention
+    of (log s, alpha) panels: solutions with the opposite sign of u0 to the best fit are counted at alpha + pi, and
+    the fit at such a point keeps that sign (alpha - pi in the model). Starts: the n_starts nearest known solutions
+    of `previous` (lattice / densify results, refine cells, alpha_minima rows); then neighbour refinement sweeps.
+    Returns dict(logs, alphas, chi2 (ns, na), pars (ns, na, 7) model vectors, chi2_ref, wall)."""
+    workers = _workers(workers)
+    cfg, fitdata = _prepare(data, cfg, best, bin_wings)
+    logs, alphas = np.asarray(logs, float), np.asarray(alphas, float)
+    known = []                                                         # 7-vectors (t0, u0, tE, ls, lq, al, lr), chi2
+    for r in previous:
+        if isinstance(r, np.ndarray):                                  # alpha_minima rows
+            for row in r:
+                ls_, lq_, c, t0, u0, tE, al, lr = row
+                known.append((np.array([t0, u0, tE, ls_, lq_, al, lr]), c))
+        elif np.ndim(r["chi2"]) == 2:
+            for i, ls_ in enumerate(r["logs"]):
+                for j, lq_ in enumerate(r["logq"]):
+                    p = r["pars"][i, j]
+                    if np.isfinite(r["chi2"][i, j]) and np.all(np.isfinite(p)):
+                        known.append((np.array([p[0], p[1], p[2], ls_, lq_, p[3], p[4]]), r["chi2"][i, j]))
+        else:
+            for x, c in zip(r["x"], r["chi2"]):
+                if np.isfinite(c) and np.all(np.isfinite(x)):
+                    known.append((np.array([x[0], x[1], x[2], x[5], x[6], x[3], x[4]]), c))
+    u0_ref = min(known, key=lambda v: v[1])[0][1]
+    K = np.array([(p[3], _plot_alpha(p, u0_ref)) for p, _ in known])
+    ds, da = abs(logs[1] - logs[0]), abs(alphas[1] - alphas[0])
+
+    def model_alpha(p, al):                                            # alpha used in the model for a start p
+        return al if np.sign(p[1]) == np.sign(u0_ref) else al - np.pi
+
+    ST = G.Stages(2, log)
+    ST("Fits at fixed (log s, alpha)", f"{len(logs) * len(alphas)} points from the {n_starts} nearest of "
+                                       f"{len(known)} known solutions")
+    t0 = time.time()
+    tasks = {}
+    for i, ls in enumerate(logs):
+        for j, al in enumerate(alphas):
+            dal = (K[:, 1] - al + np.pi) % (2 * np.pi) - np.pi
+            dist = np.hypot((K[:, 0] - ls) / ds, dal / da)
+            near = np.argsort(dist)[:4 * n_starts]
+            near = [near[0]] + sorted(near[1:], key=lambda k: (dist[k] > 2.0, known[k][1]))[:n_starts - 1]
+            # starts of one u0 sign per point (the nearest one's), fitted at the matching model alpha
+            sg = np.sign(known[near[0]][0][1])
+            starts = [known[k][0] for k in near if np.sign(known[k][0][1]) == sg]
+            tasks[(i, j)] = (float(ls), float(model_alpha(known[near[0]][0], al)), starts, cfg)
+    G.warmup(cfg, fitdata)
+    res, _ = G.run_isolated(_sa_fit, tasks, workers, log=log, desc="(log s, alpha) fits")
+    chi = np.full((len(logs), len(alphas)), np.nan)
+    pars = np.full((len(logs), len(alphas), 7), np.nan)
+    for (i, j), v in res.items():
+        if v is not None and v[1] is not None:
+            chi[i, j], pars[i, j] = v
+    ST("Neighbour refinement", "refit points whose neighbours found a better solution")
+    ns, na = chi.shape
+    for sweep in range(max_sweeps):
+        tasks = {}
+        for i in range(ns):
+            for j in range(na):
+                nb = [(i + a, (j + b) % na) for a in (-1, 0, 1) for b in (-1, 0, 1) if (a or b) and 0 <= i + a < ns]
+                cand = [pars[k] for k in nb if np.isfinite(chi[k]) and chi[k] < chi[i, j] - margin
+                        and np.sign(pars[k][1]) == np.sign(pars[i, j][1] if np.all(np.isfinite(pars[i, j])) else pars[k][1])]
+                if cand:
+                    al = pars[i, j][5] if np.all(np.isfinite(pars[i, j])) else model_alpha(cand[0], alphas[j])
+                    tasks[(i, j)] = (float(logs[i]), float(al), cand, cfg, True, float(chi[i, j]), margin)
+        if not tasks:
+            break
+        res, _ = G.run_isolated(_sa_fit, tasks, workers, log=log, desc=f"neighbour refinement, pass {sweep + 1}")
+        n = 0
+        for k, v in res.items():
+            if v is not None and v[1] is not None and v[0] < chi[k] - 1e-9:
+                chi[k], pars[k] = v
+                n += 1
+        log(f"neighbour refinement, pass {sweep + 1}: {len(tasks)} points checked, {n} improved")
+        if n == 0:
+            break
+    ref = float(min(np.nanmin(chi), min(c for _, c in known)))
+    log(f"done in {time.time() - t0:.0f}s; lowest chi2 {ref:.2f}")
+    return dict(logs=logs, alphas=alphas, chi2=chi, pars=pars, chi2_ref=ref, wall=time.time() - t0)

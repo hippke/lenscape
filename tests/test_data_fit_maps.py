@@ -107,3 +107,17 @@ def test_densify_and_alpha_minima():
     m = maps.alpha_minima(fine, d, best=TRUE, workers=2, n_alpha=8, log=lambda *a: None)
     at_true = m[(np.abs(m[:, 0] - TRUE[3]) < 1e-9) & (np.abs(m[:, 1] - TRUE[4]) < 1e-9)]
     assert len(at_true) >= 1 and np.min(at_true[:, 2]) <= fine["chi2"][1, 1] + 1.0
+
+
+@pytest.mark.slow
+def test_alpha_profile_has_minimum_at_truth():
+    """(log s, alpha) profile map: a value everywhere, the minimum at the true (log s, alpha)."""
+    d = synthetic(n=60, efac=4.0)
+    lat = maps.lattice(d, TRUE[3] + np.array([-0.03, 0.03]), TRUE[4] + np.array([-0.15, 0.15]), best=TRUE,
+                       workers=2, log=lambda *a: None)
+    alphas = TRUE[5] + np.array([-0.1, 0.0, 0.1])
+    r = maps.alpha_profile([lat], d, TRUE[3] + np.array([-0.02, 0.0, 0.02]), alphas, best=TRUE, workers=2,
+                           log=lambda *a: None)
+    assert np.all(np.isfinite(r["chi2"]))
+    assert np.unravel_index(np.nanargmin(r["chi2"]), (3, 3)) == (1, 1)
+    assert r["chi2"][1, 1] < len(d) + 5 * np.sqrt(2 * len(d))
