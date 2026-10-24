@@ -120,6 +120,14 @@ optimises the best `cfg["n_screen"]` with Nelder–Mead in (t0, t_eff, ln tE, al
 with `x = (t0, u0, tE, alpha, log rho)`. `warm`: extra start vectors (e.g. neighbours' solutions) when
 `cfg["warm"]` is true.
 
+**Caustic-crossing starts.** For events with resolved caustic crossings, `cfg["caustic_crossings"] = (t_in, t_out)`
+adds starting points built from the crossing times (the caustic-crossing parameterisation of Cassan 2008): every
+pair of points on the caustics of (s, q) fixes a trajectory that is on the caustic at both times. The best
+`cfg["n_caustic"]` (default 4) of these, by χ², are fitted along with the angle screen (`cfg["caustic_only"] = True`
+drops the screen). From a rough start this finds solutions the angle screen misses; from a good start (e.g. in maps,
+which start from the best fit) it helps less and doubles the cost of a fit, so it is off by default.
+`fit.caustic_starts(ls, lq, crossings, logrho, n=24)` returns the candidate vectors.
+
 ### `fit_point_box(box, data, cfg, warm=None)`
 Best fit anywhere in the cell `box = (logs_lo, logs_hi, logq_lo, logq_hi)`: s and q are free inside the cell.
 Returns `(chi2, x)` with the 7-vector `x = (t0, u0, tE, alpha, log rho, log s, log q)`.

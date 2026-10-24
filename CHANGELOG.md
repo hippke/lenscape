@@ -10,6 +10,7 @@ First public version.
 - Delta chi2 maps: `lattice()` (cell fits, lattice-point fits, neighbour refinement, outlier recalculation) and
   `refine()` (finer cells along the Delta chi2 band edges), `densify()` and `polish()` (finer lattices from known
   solutions), `alpha_minima()` (all local solutions in the trajectory angle).
+- Caustic-crossing starting points for fits (`cfg["caustic_crossings"]`).
 - Annual parallax and linear orbital motion, MCMC (affine-invariant ensemble), source radius and Einstein radius.
 - Figures: model light curves with residuals and insets, caustics and source trajectories, Δχ² maps.
 - Data: KMTNet archive and arXiv downloads (`datasets`), data points from vector figures (`eps`).

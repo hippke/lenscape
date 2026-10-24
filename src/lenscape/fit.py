@@ -72,6 +72,59 @@ def screen_alphas(f, k, seed=None):
     return [starts[i] for i in np.argsort(c)[:k]]
 
 
+def caustic_starts(ls, lq, crossings, logrho=-3.0, n=24):
+    """Start vectors (t0, u0, tE, alpha, log rho) of straight trajectories that enter the caustics of (s, q) at
+    crossings[0] and leave them at crossings[1] (caustic-crossing parameterisation, Cassan 2008; MulensModel's
+    uniform caustic sampling): every ordered pair of points (z_in, z_out), n points per caustic sampled uniformly in
+    arc length on the same caustic, fixes the direction (alpha), the impact parameter (u0), the timescale
+    tE = (t_out - t_in) / |z_out - z_in| and t0. Frame and trajectory as in model.lc / caustics.trajectory."""
+    from . import caustics as K
+    t_in, t_out = float(crossings[0]), float(crossings[1])
+    out = []
+    for c in K.caustics(10.0 ** ls, 10.0 ** lq, 4000):
+        z = c[:-1]
+        arc = np.r_[0.0, np.cumsum(np.abs(np.diff(z)))]
+        pts = np.interp(np.linspace(0, arc[-1], n, endpoint=False), arc, z.real) + \
+            1j * np.interp(np.linspace(0, arc[-1], n, endpoint=False), arc, z.imag)
+        for a in range(n):
+            for b in range(n):
+                if a == b:
+                    continue
+                dz = pts[b] - pts[a]
+                L = abs(dz)
+                if L < 1e-6:
+                    continue
+                d = dz / L                                     # direction of motion = (-cos alpha, -sin alpha)
+                al = np.arctan2(-d.imag, -d.real)
+                nvec = complex(np.sin(al), -np.cos(al))         # y(tau) = u0 n + tau d
+                u0 = pts[a].real * nvec.real + pts[a].imag * nvec.imag
+                tau_in = pts[a].real * d.real + pts[a].imag * d.imag
+                tE = (t_out - t_in) / L
+                out.append(np.array([t_in - tau_in * tE, u0, tE, np.mod(al, 2 * np.pi), logrho]))
+    return out
+
+
+def screen_caustic(fx, ls, lq, crossings, k, logrho=-3.0, n=24):
+    """The k best caustic_starts by chi2 (fx: chi2 of a 5-vector at fixed s, q); several crossing pairs may be
+    given as a list of (t_in, t_out)."""
+    pairs = [crossings] if np.ndim(crossings) == 1 else list(crossings)
+    cand = [x for pr in pairs for x in caustic_starts(ls, lq, pr, logrho, n)]
+    if not cand or k <= 0:
+        return []
+    c = np.array([fx(x) for x in cand])
+    return [cand[i] for i in np.argsort(c)[:k]]
+
+
+def _all_starts(fx, ls, lq, cfg):
+    """Angle screen and, if cfg["caustic_crossings"] is set, caustic-crossing starts."""
+    starts = [] if cfg.get("caustic_only") else screen_alphas(fx, cfg.get("n_screen", 4), cfg.get("seed"))
+    if cfg.get("caustic_crossings") is not None:
+        lr = (cfg.get("seed") or {}).get("logrho", -3.0)
+        starts += screen_caustic(fx, ls, lq, cfg["caustic_crossings"], cfg.get("n_caustic", 4), lr,
+                                 cfg.get("caustic_samples", 24))
+    return starts
+
+
 class Coords:
     """Optimiser coordinates.
     'native': (t0, u0, tE, alpha, log rho)
@@ -122,7 +175,7 @@ def fit_point_screen_d(ls, lq, data, cfg, warm=None):
     f = lambda y: fx(co.to_x(y))
     f.coords = co
     trials = []
-    starts = screen_alphas(fx, cfg.get("n_screen", 4), cfg.get("seed"))
+    starts = _all_starts(fx, ls, lq, cfg)
     for w in (warm or []):
         if w is not None and np.all(np.isfinite(w)):
             starts.append(np.asarray(w))
@@ -201,7 +254,7 @@ def fit_point_box(box, data, cfg, warm=None):
 
     lsc, lqc = 0.5 * (s_lo + s_hi), 0.5 * (q_lo + q_hi)
     fx = lambda x: model.chi2(be, full_p(x, lsc, lqc), data)
-    starts = [np.r_[co.from_x(x0), 0.0, 0.0] for x0 in screen_alphas(fx, cfg.get("n_screen", 4), cfg.get("seed"))]
+    starts = [np.r_[co.from_x(x0), 0.0, 0.0] for x0 in _all_starts(fx, lsc, lqc, cfg)]
     for w in (warm or []):
         if w is not None and np.all(np.isfinite(w)):
             us = _logit((w[5] - s_lo) / (s_hi - s_lo))

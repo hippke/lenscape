@@ -121,3 +121,34 @@ def test_alpha_profile_has_minimum_at_truth():
     assert np.all(np.isfinite(r["chi2"]))
     assert np.unravel_index(np.nanargmin(r["chi2"]), (3, 3)) == (1, 1)
     assert r["chi2"][1, 1] < len(d) + 5 * np.sqrt(2 * len(d))
+
+
+CROSS = np.array([0.0, -0.025, 35.0, 0.002, -2.4, 4.41, -3.3])      # a resonant caustic crossing
+CROSS_T = (-2.4423, 2.1252)                                          # its caustic entry and exit times
+
+
+def test_caustic_starts_touch_the_caustic_at_the_given_times():
+    """Every constructed trajectory is on the caustic at t_in and at t_out (it may cross there or touch it)."""
+    from lenscape import caustics as K
+    S = np.array(F.caustic_starts(CROSS[3], CROSS[4], CROSS_T, -3.3, 12))
+    assert len(S) == 12 * 11
+    caus = np.concatenate(K.caustics(10 ** CROSS[3], 10 ** CROSS[4], 20000))
+    for x in S:
+        p = np.r_[x[:3], CROSS[3], CROSS[4], x[3], x[4]]
+        for z in K.trajectory(p, CROSS_T):
+            assert np.min(np.abs(caus - z)) < 2e-4
+
+
+def test_caustic_starts_recover_a_crossing_from_a_rough_start():
+    """From a rough start the 20-angle screen misses the caustic crossing; caustic-crossing starts find it."""
+    rng = np.random.default_rng(2)
+    be = F.make_backend(C.REFINE_BACKEND)
+    t = np.sort(np.r_[rng.uniform(-80, 80, 150), rng.uniform(-4, 4, 150)])
+    e = np.full(len(t), 30.0)
+    d = D.Data(t, 1000 * be.lc(CROSS, t) + 300 + rng.normal(0, e), e, np.zeros(len(t), np.int64), ["T"])
+    seed = dict(t0=0.3, u0=0.06, tE=25.0, logrho=-3.0)
+    c0, _ = F.fit_point(CROSS[3], CROSS[4], d, dict(C.DEFAULT, seed=seed))
+    c1, x1 = F.fit_point(CROSS[3], CROSS[4], d, dict(C.DEFAULT, seed=seed, caustic_crossings=CROSS_T,
+                                                    caustic_only=True))
+    assert c1 < len(d) + 5 * np.sqrt(2 * len(d)) < c0
+    assert abs(x1[2] - CROSS[2]) < 0.5
