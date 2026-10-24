@@ -1,6 +1,6 @@
 """Grid-point optimisation strategies: s, q fixed; (t0, u0, tE, alpha, log rho) optimised."""
 import numpy as np
-from scipy.optimize import minimize
+from .optimize import minimize
 from . import model
 
 SEED = None          # default start vector dict(t0, u0, tE, logrho); per fit: cfg["seed"] (see seed_from_data)
@@ -173,7 +173,7 @@ class Coords:
     """Optimiser coordinates.
     'native': (t0, u0, tE, alpha, log rho)
     'teff'  : (t0, t_eff = u0*tE, ln tE, alpha, log10 t_*), t_* = rho*tE  (what a blended high-mag event measures)
-    Steps define a scaled initial simplex (scipy's default is +-5 % of each value, i.e. +-38 d in t0)."""
+    Steps define a scaled initial simplex (the default simplex is +-5 % of each value, i.e. +-38 d in t0)."""
 
     def __init__(self, kind):
         self.kind = kind
@@ -201,7 +201,7 @@ class Coords:
 
 
 def _nm(f, y0, maxfev, step_scale, fatol=None):
-    if step_scale is None:                       # scipy default simplex
+    if step_scale is None:                       # default simplex (+-5 %)
         return minimize(f, y0, method="Nelder-Mead", options=dict(maxfev=maxfev, adaptive=True,
                                                                    **({"fatol": fatol} if fatol else {})))
     sim = np.vstack([y0] + [y0 + np.eye(5)[k] * st for k, st in enumerate(f.coords.steps(y0, step_scale))])

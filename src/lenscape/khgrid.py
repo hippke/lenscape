@@ -9,7 +9,7 @@ h = +-(m log s_ref + distance in (log s, log q) from the point of the same k at 
 equal central-caustic size. The paper gives no inverse; to_sq solves it numerically.
 """
 import numpy as np
-from scipy.optimize import brentq
+from .optimize import bisect
 
 LS_REF = 0.03
 M = 35.0
@@ -46,7 +46,7 @@ def to_sq(k, h, ls_max=3.0):
     f = lambda x: np.hypot(x - LS_REF, _logq_on_contour(x, k) - lq_ref) - d
     if f(ls_max) < 0:
         return None
-    x = brentq(f, LS_REF, ls_max, xtol=1e-10)
+    x = bisect(f, LS_REF, ls_max, xtol=1e-10)
     return np.sign(h) * x, _logq_on_contour(x, k)
 
 

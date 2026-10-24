@@ -15,7 +15,7 @@ terminal; LENSCAPE_PROGRESS=0/1 forces them off/on).
 """
 import os, time
 import numpy as np
-from scipy.optimize import minimize
+from .optimize import minimize
 from . import config as C, grid as G, data as D, fit as F, model as M, amr
 
 BANDS = (4.0, 16.0, 36.0, 64.0, 100.0)

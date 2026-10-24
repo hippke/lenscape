@@ -65,7 +65,7 @@ Each stage prints a numbered header and a progress bar.
 pip install git+https://github.com/hippke/lenscape
 ```
 
-Requirements: Python ≥ 3.10, NumPy, SciPy, numba, tqdm; matplotlib for figures. The first call compiles the
+Requirements: Python ≥ 3.10, NumPy, numba, tqdm; matplotlib for figures. The first call compiles the
 kernels (about a minute); they are cached on disk afterwards.
 
 ## Usage

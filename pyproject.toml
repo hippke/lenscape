@@ -17,12 +17,12 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Astronomy",
     "Intended Audience :: Science/Research",
 ]
-dependencies = ["numpy>=1.22", "scipy>=1.8", "numba>=0.57", "tqdm"]
+dependencies = ["numpy>=1.22", "numba>=0.57", "tqdm"]
 
 [project.optional-dependencies]
 plot = ["matplotlib>=3.5"]
-# reference codes are used only by the tests to validate lenscape's own implementation
-test = ["pytest>=7", "matplotlib>=3.5", "VBBinaryLensing>=3.7"]
+# reference codes (VBBinaryLensing, SciPy) are used only by the tests to validate lenscape's own code
+test = ["pytest>=7", "matplotlib>=3.5", "VBBinaryLensing>=3.7", "scipy>=1.8"]
 
 [project.urls]
 Homepage = "https://github.com/hippke/lenscape"
