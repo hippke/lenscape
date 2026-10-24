@@ -1,0 +1,25 @@
+"""Default settings of the fits and maps. Copy and modify a dict (dict(config.DEFAULT, n_screen=6)) rather than
+changing the module values.
+
+Backends compute light curves: kind "nb" is lenscape's own numba code. Tolerances: tol (point-source / finite-source
+switch), reltol (relative accuracy of the finite-source magnification), hexeps (acceptance of the quadrupole and
+hexadecapole approximations), ctol (contour integration).
+"""
+
+# loose settings for the many fits of a map; tight settings for best fits, MCMC and figures
+GRID_BACKEND = dict(kind="nb", tol=1e-2, reltol=3e-3, hexeps=1e-3, ctol=0.1)
+REFINE_BACKEND = dict(kind="nb", tol=1e-3, hexeps=1e-4, ctol=0.01)
+
+DEFAULT = dict(
+    strategy="screen_d",           # 20 trajectory angles screened, the best n_screen refined (fit.fit_point)
+    n_screen=4,
+    coords="teff",                 # fit in (t0, t_eff = u0 tE, ln tE, alpha, log t_* = log rho tE)
+    explore_scale=None,
+    refine_step=0.3,
+    grid_backend=GRID_BACKEND,
+    refine_backend=REFINE_BACKEND,
+    seed=None,                     # start vector dict(t0, u0, tE, logrho); fit.seed_from_data(data) estimates one
+)
+
+# backwards-compatible name
+CURRENT = DEFAULT

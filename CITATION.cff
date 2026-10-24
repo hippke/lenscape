@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the accompanying research note and the software."
+title: "lenscape: fast and complete Delta chi2 maps of binary-lens microlensing events"
+authors:
+  - family-names: "Hippke"
+    given-names: "Michael"
+version: 0.1.0
+license: GPL-3.0-or-later
+repository-code: "https://github.com/hippke/lenscape"
+preferred-citation:
+  type: article
+  title: "lenscape: Fast and Complete Delta chi2 Maps of Binary-lens Microlensing Events"
+  authors:
+    - family-names: "Hippke"
+      given-names: "Michael"
+  year: 2026
+  journal: "Research Notes of the AAS (in preparation)"

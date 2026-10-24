@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lenscape"
+version = "0.1.0"
+description = "Fast and complete Delta chi2 maps of binary-lens microlensing events (numba)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "Michael Hippke" }]
+keywords = ["microlensing", "exoplanets", "binary lens", "caustics", "light curves", "numba"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Intended Audience :: Science/Research",
+]
+dependencies = ["numpy>=1.22", "scipy>=1.8", "numba>=0.57", "tqdm"]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.5"]
+# reference codes are used only by the tests to validate lenscape's own implementation
+test = ["pytest>=7", "matplotlib>=3.5", "VBBinaryLensing>=3.7"]
+
+[project.urls]
+Homepage = "https://github.com/hippke/lenscape"
+Documentation = "https://github.com/hippke/lenscape/tree/main/docs"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: runs a small map (about a minute); deselect with -m 'not slow'"]
