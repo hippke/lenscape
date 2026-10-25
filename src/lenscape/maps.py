@@ -697,3 +697,31 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
     log(f"done in {time.time() - t0:.0f}s; lowest chi2 {ref:.2f}")
     return dict(logs=logs, alphas=alphas, chi2=chi, pars=pars, chi2_ref=ref, wall=time.time() - t0,
                 u0_ref=float(u0_ref), one_sign=bool(one_sign))
+
+
+def multilevel(data, logs, logq, best=None, cfg=None, workers=None, levels=1, bands=BANDS, bin_wings=True, log=print):
+    """A map by levels: lattice() with seed grid and cell fits on every 2**levels-th point of logs x logq, then
+    densify() to each twice finer lattice down to the full one (each level started from all coarser results).
+    Cell fits cost about ten lattice points each and are needed only to find narrow valleys between points; the
+    fine levels inherit the coarse solutions. The coarse lattice must still resolve the map's valleys (spacing a
+    few times finer than the narrowest valley): a 17 x 17 test block of MOA-2022-BLG-091 from a 5 x 5 coarse lattice
+    (levels=2) took twice as long as the direct lattice and ended worse at 13 % of the points, while the 50 x 49
+    paper lattice densified to 8x (the same route by hand) is the workflow of the research note. Requires
+    len(logs) - 1 and len(logq) - 1 to be multiples of 2**levels. Returns the finest result (as densify(); "cells"
+    of the coarse lattice, "levels": the results of all levels, coarse first)."""
+    logs, logq = np.asarray(logs, float), np.asarray(logq, float)
+    step = 2 ** levels
+    if (len(logs) - 1) % step or (len(logq) - 1) % step:
+        raise ValueError(f"len(logs) - 1 and len(logq) - 1 must be multiples of {step} for levels={levels}")
+    t0 = time.time()
+    r = lattice(data, logs[::step], logq[::step], best=best, cfg=cfg, workers=workers, bands=bands,
+                bin_wings=bin_wings, log=log)
+    out, previous = [r], [r, r["cells"]]
+    for lev in range(levels - 1, -1, -1):
+        s = 2 ** lev
+        log(f"\nlevel {levels - lev}/{levels}: {len(logs[::s])} x {len(logq[::s])} points")
+        r = densify(previous, data, logs[::s], logq[::s], best=best, cfg=cfg, workers=workers, bin_wings=bin_wings,
+                    log=log)
+        out.append(r)
+        previous = [r] + previous
+    return dict(r, cells=out[0]["cells"], levels=out, wall=time.time() - t0)

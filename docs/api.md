@@ -108,6 +108,13 @@ A (finer) lattice started from known solutions: every point is fitted from the n
 and outlier recalculation. No seed grid and no cell fits: a 2× finer map of a 50 × 49 lattice (9603 points) took
 27 minutes on a 16-core desktop CPU.
 
+### `multilevel(data, logs, logq, best=None, cfg=None, workers=None, levels=1, bands=(4, 16, 36, 64, 100), bin_wings=True, log=print)`
+`lattice()` on every 2^levels-th point of the lattice, then `densify()` level by level to the full lattice: the
+route for fine maps (cell fits cost about ten lattice points each). The coarse lattice must still resolve the
+valleys of the map; from a 5 × 5 coarse lattice a 17 × 17 test block ended worse at 13 % of its points, from the
+50 × 49 paper lattice the 8× map of the research note is the same route by hand. `len(logs) − 1` and
+`len(logq) − 1` must be multiples of 2^levels.
+
 ### `polish(result, data, previous=(), best=None, cfg=None, workers=None, max_sweeps=30, dchi2_cut=5.0)`
 Improves a result: at points shared with `previous` lattices it keeps the better solution, then runs neighbour
 refinement and outlier recalculation again.

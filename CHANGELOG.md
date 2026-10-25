@@ -45,6 +45,8 @@ First public version.
   extrapolation from the interior by more than the threshold is searched (one such point had stayed 16 above).
 - `cfg["bin_K"]`, `cfg["bin_tol"]`: the wing-binning window and the per-night check tolerance as settings
   (`bin_K=0.5`: −10 % CPU on the test block, same bands; default 1.0).
+- `maps.multilevel`: lattice on a coarse sub-lattice, then densify level by level (the route for fine maps; the
+  coarse lattice must resolve the valleys).
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.
