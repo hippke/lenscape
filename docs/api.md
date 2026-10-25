@@ -119,11 +119,16 @@ has a value everywhere. Started from the nearest known solutions of `previous` (
 rows), then neighbour refinement (α periodic). Returns `dict(logs, alphas, chi2 (ns, na), pars (ns, na, 7),
 chi2_ref, wall)`.
 
-**Neighbour refinement passes** (in `lattice`, `densify`, `polish`, `alpha_profile`): after the first pass, only
-points are checked that have a point changed in the previous pass in their 3 × 3 neighbourhood (or were not checked
-before). A refit depends only on the point's own and its neighbours' values and the fits are deterministic, so the
-skipped points would repeat a rejected refit: the result is identical, with far fewer refits in later passes.
-`changed_only=False` (here and in `grid.relax`) checks every point in every pass.
+**Neighbour refinement** (in `lattice`, `densify`, `polish`, `alpha_profile`): every point whose neighbourhood
+changed is a task; a result that improves a point by more than the margin (1) makes its eight neighbours stale, and
+stale points are queued, the largest gap to the best neighbour first. Workers (`grid.Pool`) pull from the queue as
+they finish, so an improvement spreads as fast as the fits complete, without the barrier between passes
+(`grid.refine_queue`; MOA-2022-BLG-091 16 × 16 lattice: refinement 180 → 105 CPU-s and 23 → 10 s wall, same
+bands). The end state satisfies the same rule as the earlier passes (no point has a neighbour solution that beats
+it by more than the margin after a refit), reached in a timing-dependent order, so single points can end in another
+local minimum from run to run. `cfg["relax_mode"] = "sweeps"` restores the earlier Jacobi passes (a front moves
+one lattice step per pass; `changed_only=False` then checks every point in every pass); `max_sweeps` caps the
+passes, or the refits of one point in queue mode.
 
 `one_sign=True`: only solutions with the sign of u0 of the reference (known solutions of the other sign are mirrored,
 (u0, α) → (−u0, −α) being the same light curve). Each solution then appears once, as in maps of codes that keep u0 > 0

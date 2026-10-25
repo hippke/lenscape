@@ -367,6 +367,162 @@ def _relax_rows(rows, chi, pars, logs, logq, cfg, margin, active=None, cols=None
     return out
 
 
+def _rough_at(chi, i, j, tau, wrap_j=False):
+    """_rough for one point, from its 5 x 5 neighbourhood."""
+    ni, nj = chi.shape
+    w = np.full((5, 5), np.nan)
+    for a in range(-2, 3):
+        if not 0 <= i + a < ni:
+            continue
+        for b in range(-2, 3):
+            jj = (j + b) % nj if wrap_j else j + b
+            if 0 <= jj < nj:
+                w[a + 2, b + 2] = chi[i + a, jj]
+    return bool(_rough(w, tau)[2, 2])
+
+
+def _relax_point(ls, lq, own, nb_pars, cfg, margin, forced):
+    """One point of the queue refinement: the neighbours' solutions nb_pars evaluated at (ls, lq); the best
+    cfg["relax_tries"] (+1 if forced) that beat own - margin (forced: all, ranked) are refined (fit.local_fit).
+    Returns (chi2, x) if one beats own by more than margin (forced: 0.01), else None."""
+    from . import model
+    be = F.make_backend(cfg["grid_backend"])
+    co = F.Coords(cfg.get("coords", "teff"))
+    fx = lambda x: model.chi2(be, F.full_p(x, ls, lq), _DATA)
+    best_c = own if np.isfinite(own) else np.inf
+    cands = []
+    for x0 in nb_pars:
+        c = fx(x0)
+        if forced or c < best_c - margin:
+            cands.append((c, x0))
+    cands.sort(key=lambda z: z[0])
+    tries = cfg.get("relax_tries", 2)
+    mg = 0.01 if forced else margin
+    new = None
+    for c0, x0 in cands[:tries + 1 if forced else tries]:
+        if cfg.get("optimizer", "nm") != "nm":
+            rc, ry = F.local_fit(be, _DATA, ls, lq, co.from_x(x0), cfg, cfg.get("refine_step", 0.3),
+                                 cfg.get("relax_nfev", 600))
+        else:
+            f = lambda y: fx(co.to_x(y))
+            f.coords = co
+            r = F._nm(f, co.from_x(x0), cfg.get("relax_nfev", 600), cfg.get("refine_step", 0.3), 1e-2)
+            rc, ry = r.fun, r.x
+        if rc < best_c - mg:
+            best_c, new = rc, co.to_x(ry)
+    return (best_c, new) if new is not None else None
+
+
+def refine_queue(chi, pars, fn, make_args, workers=19, margin=1.0, log=print, desc="neighbour refinement",
+                 wrap_j=False, smooth=None, active=None, max_refits=30):
+    """Asynchronous neighbour refinement of a map (chi, pars updated copies returned). Every point is a task
+    (fn(*make_args(i, j, chi, pars, forced)) -> (chi2, x) or None); a point whose result improves it by more than
+    `margin` (or that was unknown) makes its eight neighbours stale, and stale points are queued, the largest gap to
+    the best neighbour first. Workers (grid.Pool) pull from the queue as they finish, so an improvement spreads as
+    fast as the fits complete instead of one lattice step per sweep with a barrier between sweeps; the final
+    state satisfies the same rule as the sweeps (no stale point left), reached in a timing-dependent order.
+    Forced points (rough by `smooth`, grid._rough) are refit even without a better neighbour; their gains below the
+    margin are kept but do not propagate. active: mask of points to consider (None: all). A point is refit at most
+    max_refits times."""
+    import heapq
+    chi, pars = chi.copy(), pars.copy()
+    ni, nj = chi.shape
+    stale = np.ones(chi.shape, bool) if active is None else active.copy()
+    inflight, dirty, refits = {}, set(), np.zeros(chi.shape, np.int64)
+    heap, seq = [], 0
+
+    def nb_min(i, j):
+        m = np.inf
+        for a in (-1, 0, 1):
+            for b in (-1, 0, 1):
+                if not (a or b) or not 0 <= i + a < ni:
+                    continue
+                jj = (j + b) % nj if wrap_j else j + b
+                if 0 <= jj < nj and np.isfinite(chi[i + a, jj]):
+                    m = min(m, chi[i + a, jj])
+        return m
+
+    def push(i, j):
+        nonlocal seq
+        if active is not None and not active[i, j]:
+            return
+        if (i, j) in inflight:
+            dirty.add((i, j))
+            return
+        if stale[i, j] and refits[i, j] < max_refits:
+            own = chi[i, j] if np.isfinite(chi[i, j]) else np.inf
+            gap = own - nb_min(i, j)                 # largest gap to the best neighbour first (steep fronts)
+            heapq.heappush(heap, (-gap if np.isfinite(gap) else -np.inf, seq, i, j))
+            seq += 1
+
+    for i in range(ni):
+        for j in range(nj):
+            push(i, j)
+    bar = progress_bar(len(heap), desc)
+    n_task = n_imp = n_small = n_capped = 0
+    with Pool(fn, workers, log) as pool:
+        def dispatch():
+            nonlocal n_task
+            while heap and pool.n_idle > 0:
+                _, _, i, j = heapq.heappop(heap)
+                if not stale[i, j] or (i, j) in inflight:
+                    continue
+                forced = smooth is not None and _rough_at(chi, i, j, smooth, wrap_j)
+                args = make_args(i, j, chi, pars, forced)
+                stale[i, j] = False
+                if args is None:                     # nothing to try at this point
+                    continue
+                inflight[(i, j)] = forced
+                refits[i, j] += 1
+                n_task += 1
+                pool.submit((i, j), args)
+
+        dispatch()
+        while True:
+            out = pool.next()
+            if out is None:
+                if heap:
+                    dispatch()
+                    continue
+                break
+            (i, j), status, v = out
+            forced = inflight.pop((i, j))
+            if bar is not None:
+                bar.update(1)
+            if status != "ok":
+                stale[i, j] = True                   # lost task: check again
+            elif v is not None and v[1] is not None and (v[0] < chi[i, j] or not np.isfinite(chi[i, j])):
+                gain = chi[i, j] - v[0]
+                unknown = not np.isfinite(chi[i, j])
+                chi[i, j], pars[i, j] = v[0], v[1]
+                if gain > margin or unknown:
+                    n_imp += 1
+                    for a in (-1, 0, 1):
+                        for b in (-1, 0, 1):
+                            jj = (j + b) % nj if wrap_j else j + b
+                            if 0 <= i + a < ni and 0 <= jj < nj:
+                                if a or b:
+                                    stale[i + a, jj] = True
+                                push(i + a, jj)
+                else:
+                    n_small += 1
+            if (i, j) in dirty:
+                dirty.discard((i, j))
+                stale[i, j] = True
+                push(i, j)
+            if refits[i, j] >= max_refits and stale[i, j]:
+                n_capped += 1
+            if bar is not None and heap:
+                bar.total = n_task + len(heap)
+            dispatch()
+    if bar is not None:
+        bar.close()
+    log(f"{desc}: {n_task} points checked, {n_imp} improved"
+        + (f" ({n_small} by less than {margin:g})" if n_small else "")
+        + (f"; WARNING: {n_capped} points reached max_refits={max_refits} (not converged)" if n_capped else ""))
+    return chi, pars
+
+
 _RELAX = None          # (chi, pars, logs, logq, cfg, margin, active, force) of the current relax sweep (inherited by the workers)
 
 
@@ -394,7 +550,42 @@ def _near(mask, wrap_j=False):
 
 
 def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log=print, data=None, dchi2_cut=None,
-          seg=5, changed_only=True, smooth=None):
+          seg=5, changed_only=True, smooth=None, mode=None):
+    """Neighbour refinement of a lattice map until no point has a neighbour solution that beats it by > margin.
+    mode (default cfg["relax_mode"], "queue"): "queue" = asynchronous, one task per stale point, improvements
+    propagate as fast as the fits finish (refine_queue); "sweeps" = the earlier Jacobi sweeps (relax_sweeps; a
+    front moves one lattice step per sweep, with a barrier between sweeps). max_sweeps caps the sweeps, or the
+    refits of one point in queue mode. Both: smooth (default cfg["smooth"]) also refits rough points."""
+    global _DATA
+    if data is not None:
+        _DATA = data
+    if _DATA is None:
+        _DATA = _default_data()
+    mode = cfg.get("relax_mode", "queue") if mode is None else mode
+    if mode == "sweeps":
+        return relax_sweeps(chi, pars, logs, logq, cfg, workers, margin, max_sweeps, log, data, dchi2_cut, seg,
+                            changed_only, smooth)
+    smooth = cfg.get("smooth") if smooth is None else smooth
+    active = None
+    if dchi2_cut is not None:
+        low = (chi - np.nanmin(chi)) < dchi2_cut
+        active = _near(low)
+    ni, nj = chi.shape
+
+    def make_args(i, j, chi, pars, forced):
+        nb = [pars[a, b] for a in (i - 1, i, i + 1) for b in (j - 1, j, j + 1)
+              if (a != i or b != j) and 0 <= a < ni and 0 <= b < nj and np.all(np.isfinite(pars[a, b]))]
+        if not nb:
+            return None
+        return (float(logs[i]), float(logq[j]), float(chi[i, j]), nb, cfg, margin, forced)
+
+    warmup(cfg, _DATA)
+    return refine_queue(chi, pars, _relax_point, make_args, workers, margin, log, "neighbour refinement",
+                        smooth=smooth, active=active, max_refits=max_sweeps)
+
+
+def relax_sweeps(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log=print, data=None,
+                 dchi2_cut=None, seg=5, changed_only=True, smooth=None):
     """Repeat neighbour-relaxation sweeps (rows in parallel, isolated processes) until no cell improves.
     dchi2_cut: only relax cells with Delta chi2 < cut (vs the current minimum) and their 8 neighbours.
     changed_only: after the first sweep, check only cells whose 3 x 3 neighbourhood changed since they were last

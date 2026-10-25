@@ -474,12 +474,34 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
                   one_sign=False):
     """Neighbour refinement of a (log s, alpha) profile map (alpha periodic): a point is refitted from the solutions
     of neighbours better by > margin, each at its own model alpha (a neighbour with the other sign of u0 is fitted
-    at alpha - pi or alpha + pi, so solutions of both signs spread)."""
+    at alpha - pi or alpha + pi, so solutions of both signs spread). cfg["relax_mode"] "queue" (default): the
+    asynchronous engine grid.refine_queue (improvements spread as fast as the fits finish); "sweeps": Jacobi sweeps
+    with a barrier each (changed_only: re-check only points next to a change)."""
     model_alpha = lambda p, al: al if np.sign(p[1]) == np.sign(u0_ref) else al - np.pi
     smooth = cfg.get("smooth") if smooth is None else smooth
     ns, na = chi.shape
     # alpha is periodic only if the grid covers the full circle (a partial range, e.g. 3.6 .. 5.6, has two edges)
     wrap = na > 1 and (alphas[-1] - alphas[0]) + (alphas[1] - alphas[0]) >= 2 * np.pi - 1e-9
+    if cfg.get("relax_mode", "queue") != "sweeps":
+        ok_sign = lambda p: not one_sign or np.sign(p[1]) == np.sign(u0_ref)
+
+        def make_args(i, j, chi, pars, forced):
+            nb = [(i + a, (j + b) % na) for a in (-1, 0, 1) for b in (-1, 0, 1)
+                  if (a or b) and 0 <= i + a < ns and (wrap or 0 <= j + b < na)]
+            if forced:
+                cand = [pars[k] for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k])) and ok_sign(pars[k])]
+                if not cand:
+                    return None
+                return (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg, None, np.inf, margin, 3)
+            cand = [pars[k] for k in nb if np.isfinite(chi[k]) and (not np.isfinite(chi[i, j])
+                                                                    or chi[k] < chi[i, j] - margin) and ok_sign(pars[k])]
+            if not cand:
+                return None
+            cv = float(chi[i, j]) if np.isfinite(chi[i, j]) else np.inf
+            return (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg, True, cv, margin)
+
+        return G.refine_queue(chi, pars, _sa_fit, make_args, workers, margin, log, "neighbour refinement",
+                              wrap_j=wrap, smooth=smooth, max_refits=max_sweeps)
     chi, pars = chi.copy(), pars.copy()
     stale = np.ones(chi.shape, bool)                 # 3 x 3 neighbourhood changed since the point was last checked
     for sweep in range(max_sweeps):

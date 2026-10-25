@@ -33,6 +33,9 @@ First public version.
 - Outlier recalculation: the deep search of each outlier runs as one screening task plus one task per exploration
   (`fit.heavy_starts`, `fit.heavy_explore`), so the stage uses all workers (it ran 2–3 searches on 11 workers for
   a minute); `cfg["heavy_optimizer"]` ("nm", or "nm_lm" for a 2.4× cheaper search).
+- Neighbour refinement as an asynchronous queue (`grid.refine_queue`, used by `relax` and the (log s, α) profiles):
+  improvements spread as fast as the fits finish instead of one lattice step per pass with a barrier; 16 × 16 test
+  lattice: refinement 180 → 105 CPU-s, 23 → 10 s wall. `cfg["relax_mode"]="sweeps"` keeps the earlier passes.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.
