@@ -122,6 +122,11 @@ before). A refit depends only on the point's own and its neighbours' values and 
 skipped points would repeat a rejected refit: the result is identical, with far fewer refits in later passes.
 `changed_only=False` (here and in `grid.relax`) checks every point in every pass.
 
+`one_sign=True`: only solutions with the sign of u0 of the reference (known solutions of the other sign are mirrored,
+(u0, α) → (−u0, −α) being the same light curve). Each solution then appears once, as in maps of codes that keep u0 > 0
+(e.g. Han et al. 2025). Without it every solution also appears mirrored about α = 3π/2; that map equals
+min(f(α), f(3π − α)) of the one-sign map, so it never needs its own computation.
+
 ### `alpha_profile_refine(result, data, best=None, cfg=None, workers=None, margin=1.0, max_sweeps=30)`
 More neighbour-refinement passes for an `alpha_profile` result, e.g. one stopped at `max_sweeps`. Neighbours'
 solutions of either sign of u0 are tried, each at its own model α.

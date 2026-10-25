@@ -61,13 +61,53 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None):
     return best
 
 
+def _grid_knn(Kx, Ky, xs, ys, m, period_y=None):
+    """For every point (xs[i], ys[j]) of a regular grid, the m known points (Kx, Ky) nearest in grid-step units
+    (y periodic with period_y if given): a function (i, j) -> (indices, distances), sorted by distance (ties by index).
+    Known points are bucketed by grid cell once; each query searches a growing window of cells until the m-th
+    distance is certain, so a map of 1e5 points with 1e5 known solutions takes seconds instead of a full sort per
+    point."""
+    dx, dy = abs(xs[1] - xs[0]), abs(ys[1] - ys[0])
+    nx, ny = len(xs), len(ys)
+    Kx, Ky = np.asarray(Kx, float), np.asarray(Ky, float)
+    if period_y is not None:                     # representative of each known y nearest to the grid's centre
+        yc = 0.5 * (ys[0] + ys[-1])
+        Ky = (Ky - yc + period_y / 2) % period_y - period_y / 2 + yc
+    u, v = (Kx - xs[0]) / dx, (Ky - ys[0]) / dy
+    bu = np.clip(np.round(u).astype(np.int64), 0, nx - 1)    # clamped: points outside stay findable at the edge
+    bv = np.clip(np.round(v).astype(np.int64), 0, ny - 1)
+    order = np.lexsort((np.arange(len(u)), bv, bu))
+    keys = bu[order] * ny + bv[order]
+    uk, start = np.unique(keys, return_index=True)
+    stop = np.r_[start[1:], len(keys)]
+    buckets = {int(k): order[a:b] for k, a, b in zip(uk, start, stop)}
+
+    def query(i, j):
+        r = 1
+        while True:
+            cells = [buckets.get(a * ny + b) for a in range(max(0, i - r), min(nx, i + r + 1))
+                     for b in range(max(0, j - r), min(ny, j + r + 1))]
+            cand = np.concatenate([c for c in cells if c is not None] or [np.zeros(0, np.int64)])
+            covers_all = r >= max(nx, ny)
+            if len(cand) >= m or covers_all:
+                dyv = Ky[cand] - ys[j]
+                if period_y is not None:
+                    dyv = (dyv + period_y / 2) % period_y - period_y / 2
+                d = np.hypot((Kx[cand] - xs[i]) / dx, dyv / dy)
+                o = np.lexsort((cand, d))[:m]
+                if covers_all or (len(o) == m and d[o[-1]] <= r - 0.5):
+                    return cand[o], d[o]
+            r *= 2
+    return query
+
+
 def _interp_start(known, dist, tie=0.05, max_dist=1.5):
-    """Mean (in fit coordinates, alpha unwrapped) of the equally nearest known solutions: on a lattice refined by 2,
+    """dist: (indices, distances) of the nearest known solutions (from _grid_knn). Mean (in fit coordinates, alpha unwrapped) of the equally nearest known solutions: on a lattice refined by 2,
     the bilinear interpolation at a cell centre (4 corners) or edge midpoint (2 ends), the point itself if known.
     None if they are farther than max_dist (new-lattice steps), differ in the sign of u0 or spread in alpha > 0.3."""
-    k = np.argsort(dist)[:8]
-    k = k[dist[k] <= dist[k[0]] + tie]
-    if dist[k[0]] > max_dist:
+    idx, d = dist                                  # nearest known solutions and their distances, sorted
+    k = idx[d <= d[0] + tie][:8]
+    if d[0] > max_dist:
         return None
     P = np.array([known[m][3] for m in k], float)
     if len(set(np.sign(P[:, 1]))) > 1:
@@ -197,6 +237,7 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
     K = np.array([(a, b) for a, b, _, _ in known])
     # distances in units of the new lattice step, so that s and q count alike
     ds, dq = abs(logs[1] - logs[0]), abs(logq[1] - logq[0])
+    knn = _grid_knn(K[:, 0], K[:, 1], logs, logq, max(4 * n_starts, 8))
     ST = G.Stages(3, log)
     ST("Lattice point fits", f"{len(logs) * len(logq)} points started from the {n_starts} nearest of "
                              f"{len(known)} known solutions")
@@ -204,14 +245,15 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
     tasks = {}
     for i, ls in enumerate(logs):
         for j, lq in enumerate(logq):
-            dist = np.hypot((K[:, 0] - ls) / ds, (K[:, 1] - lq) / dq)
-            near = np.argsort(dist)[:4 * n_starts]
+            nn, dn = knn(i, j)
+            dist = dict(zip(nn.tolist(), dn.tolist()))
+            near = nn[:4 * n_starts]
             # the nearest known solution always (a point of an earlier lattice keeps its own solution as a start),
             # then the best chi2 among the close ones
             ns_ = n_starts - 1 if interp else n_starts
             near = [near[0]] + sorted(near[1:], key=lambda k: (dist[k] > 2.0, known[k][2]))[:ns_ - 1]
             tasks[(i, j)] = (float(ls), float(lq), [np.asarray(known[k][3], float) for k in near], cfg,
-                             _interp_start(known, dist) if interp else None)
+                             _interp_start(known, (nn, dn)) if interp else None)
     G.warmup(cfg, fitdata)
     res, _ = G.run_isolated(_point_from_starts, tasks, workers, log=log, desc="lattice point fits")
     chi = np.full((len(logs), len(logq)), np.nan)
@@ -365,7 +407,8 @@ def _sa_fit_one(be, ls, al, y, cfg):
     return c, y
 
 
-def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_sweeps, changed_only, log, smooth=None):
+def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_sweeps, changed_only, log, smooth=None,
+                  one_sign=False):
     """Neighbour refinement of a (log s, alpha) profile map (alpha periodic): a point is refitted from the solutions
     of neighbours better by > margin, each at its own model alpha (a neighbour with the other sign of u0 is fitted
     at alpha - pi or alpha + pi, so solutions of both signs spread)."""
@@ -390,12 +433,14 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
                 nb = [(i + a, (j + b) % na) for a in (-1, 0, 1) for b in (-1, 0, 1)
                       if (a or b) and 0 <= i + a < ns and (wrap or 0 <= j + b < na)]
                 if force[i, j]:                         # outlier: refit from all neighbours, no pre-check
-                    cand = [pars[k] for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k]))]
+                    cand = [pars[k] for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k]))
+                            and (not one_sign or np.sign(pars[k][1]) == np.sign(u0_ref))]
                     if cand:
                         tasks[(i, j)] = (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg)
                     continue
                 cand = [pars[k] for k in nb if np.isfinite(chi[k]) and (not np.isfinite(chi[i, j])
-                                                                        or chi[k] < chi[i, j] - margin)]
+                                                                        or chi[k] < chi[i, j] - margin)
+                        and (not one_sign or np.sign(pars[k][1]) == np.sign(u0_ref))]
                 if cand:
                     als = [model_alpha(c, alphas[j]) for c in cand]
                     cv = float(chi[i, j]) if np.isfinite(chi[i, j]) else np.inf
@@ -422,7 +467,7 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
 
 
 def alpha_profile_refine(result, data, best=None, cfg=None, workers=None, margin=1.0, max_sweeps=30, bin_wings=True,
-                         log=print, changed_only=True, smooth=None):
+                         log=print, changed_only=True, smooth=None, one_sign=None):
     """More neighbour-refinement sweeps for an alpha_profile result (e.g. one stopped at max_sweeps). Returns a new
     result dict."""
     workers = _workers(workers)
@@ -431,12 +476,13 @@ def alpha_profile_refine(result, data, best=None, cfg=None, workers=None, margin
     u0_ref = _profile_u0_ref(result)
     t0 = time.time()
     G.warmup(cfg, fitdata)
+    one_sign = bool(result.get("one_sign", False)) if one_sign is None else one_sign
     chi, pars = _alpha_sweeps(chi, pars, result["logs"], result["alphas"], u0_ref, cfg, workers, margin, max_sweeps,
-                              changed_only, log, smooth)
+                              changed_only, log, smooth, one_sign)
     ref = float(min(np.nanmin(chi), result.get("chi2_ref", np.inf)))
     log(f"done in {time.time() - t0:.0f}s; lowest chi2 {ref:.2f}")
     return dict(logs=np.asarray(result["logs"]), alphas=np.asarray(result["alphas"]), chi2=chi, pars=pars,
-                chi2_ref=ref, wall=time.time() - t0, u0_ref=float(u0_ref))
+                chi2_ref=ref, wall=time.time() - t0, u0_ref=float(u0_ref), one_sign=bool(one_sign))
 
 
 def _profile_u0_ref(result):
@@ -457,7 +503,8 @@ def _plot_alpha(p, u0_ref):
 
 
 def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=None, n_starts=3, margin=1.0,
-                  max_sweeps=30, bin_wings=True, log=print, changed_only=True, u0_ref=None, smooth=None):
+                  max_sweeps=30, bin_wings=True, log=print, changed_only=True, u0_ref=None, smooth=None,
+                  one_sign=False):
     """Profile chi2 over (log s, alpha): at every grid point, chi2 minimised over all other parameters including
     log q, so the map has a value everywhere (unlike a projection of lattice solutions). alpha is in the convention
     of (log s, alpha) panels: solutions with the opposite sign of u0 to the best fit are counted at alpha + pi, and
@@ -466,6 +513,9 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
     u0_ref: the sign of u0 counted at the plotted alpha; default: that of an alpha_profile result in `previous`,
     else of the best known solution (pass it when `previous` holds solutions of both signs, e.g. a refined profile
     converted to rows: its best point may be the mirror solution).
+    one_sign: only solutions with the sign of u0_ref (known solutions of the other sign are mirrored, (u0, alpha) ->
+    (-u0, -alpha), the same light curve): each solution appears once, as in maps of codes that keep u0 > 0. Without
+    it, every solution also appears mirrored about alpha = 3 pi / 2.
     Returns dict(logs, alphas, chi2 (ns, na), pars (ns, na, 7) model vectors, chi2_ref, wall, u0_ref)."""
     workers = _workers(workers)
     cfg, fitdata = _prepare(data, cfg, best, bin_wings)
@@ -494,8 +544,12 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
     if u0_ref is None:
         prof = [r for r in previous if isinstance(r, dict) and "alphas" in r]
         u0_ref = _profile_u0_ref(prof[0]) if prof else min(known, key=lambda v: v[1])[0][1]
+    if one_sign:                           # mirror the other sign: (u0, alpha) -> (-u0, -alpha) is the same light curve
+        known = [(p if np.sign(p[1]) == np.sign(u0_ref) else np.r_[p[0], -p[1], p[2:5], -p[5], p[6]], c)
+                 for p, c in known]
     K = np.array([(p[3], _plot_alpha(p, u0_ref)) for p, _ in known])
     ds, da = abs(logs[1] - logs[0]), abs(alphas[1] - alphas[0])
+    knn = _grid_knn(K[:, 0], K[:, 1], logs, alphas, 4 * n_starts, period_y=2 * np.pi)
 
     def model_alpha(p, al):                                            # alpha used in the model for a start p
         return al if np.sign(p[1]) == np.sign(u0_ref) else al - np.pi
@@ -507,9 +561,8 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
     tasks = {}
     for i, ls in enumerate(logs):
         for j, al in enumerate(alphas):
-            dal = (K[:, 1] - al + np.pi) % (2 * np.pi) - np.pi
-            dist = np.hypot((K[:, 0] - ls) / ds, dal / da)
-            near = np.argsort(dist)[:4 * n_starts]
+            near, dn = knn(i, j)
+            dist = dict(zip(near.tolist(), dn.tolist()))
             near = [near[0]] + sorted(near[1:], key=lambda k: (dist[k] > 2.0, known[k][1]))[:n_starts - 1]
             # starts of one u0 sign per point (the nearest one's), fitted at the matching model alpha
             sg = np.sign(known[near[0]][0][1])
@@ -524,8 +577,8 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
             chi[i, j], pars[i, j] = v
     ST("Neighbour refinement", "refit points whose neighbours found a better solution")
     chi, pars = _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_sweeps, changed_only, log,
-                              smooth)
+                              smooth, one_sign)
     ref = float(min(np.nanmin(chi), min(c for _, c in known)))
     log(f"done in {time.time() - t0:.0f}s; lowest chi2 {ref:.2f}")
     return dict(logs=logs, alphas=alphas, chi2=chi, pars=pars, chi2_ref=ref, wall=time.time() - t0,
-                u0_ref=float(u0_ref))
+                u0_ref=float(u0_ref), one_sign=bool(one_sign))

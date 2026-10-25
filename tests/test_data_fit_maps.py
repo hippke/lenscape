@@ -193,10 +193,10 @@ def test_nm_lm_local_fit_and_densify():
 def test_interp_start_is_the_mean_of_the_nearest():
     known = [(0.0, 0.0, 10.0, np.array([0.0, 0.1, 20.0, 6.2, -3.0])), (1.0, 0.0, 11.0, np.array([1.0, 0.1, 22.0, 0.1, -3.0])),
              (5.0, 5.0, 9.0, np.array([0.0, -0.1, 20.0, 1.0, -3.0]))]
-    dist = np.array([1.0, 1.0, 7.0])
+    dist = (np.array([0, 1, 2]), np.array([1.0, 1.0, 7.0]))                    # nearest indices, distances
     x = maps._interp_start(known, dist)
     assert abs(x[0] - 0.5) < 1e-12 and abs(np.mod(x[3], 2 * np.pi) - np.mod(0.5 * (6.2 + 0.1 + 2 * np.pi), 2 * np.pi)) < 1e-9
-    assert maps._interp_start(known, np.array([3.0, 3.0, 7.0])) is None              # too far
+    assert maps._interp_start(known, (np.array([0, 1, 2]), np.array([3.0, 3.0, 7.0]))) is None     # too far
 
 
 def test_near_mask():
@@ -366,3 +366,37 @@ def test_forced_refit_of_rough_cells():
     assert out and out[0][2] < chi[1, 1] - 0.01
     c2, _ = G.relax(chi, pars, logs, logq, cfg, workers=2, data=d, smooth=0.2, log=lambda *a: None)
     assert np.all(c2 <= chi + 1e-9) and c2[1, 1] < chi[1, 1] - 0.01
+
+
+def test_mirror_symmetry_and_one_sign_profile():
+    """(u0, alpha) -> (-u0, -alpha) gives the same chi2; alpha_profile(one_sign=True) keeps one sign of u0."""
+    d = synthetic(n=60, efac=4.0)
+    be = F.make_backend(C.GRID_BACKEND)
+    m = TRUE.copy()
+    m[1], m[5] = -m[1], -m[5]
+    assert abs(M.chi2(be, m, d) - M.chi2(be, TRUE, d)) < 1e-6 * M.chi2(be, TRUE, d)
+    lat = maps.lattice(d, TRUE[3] + np.array([-0.03, 0.03]), TRUE[4] + np.array([-0.15, 0.15]), best=TRUE,
+                       workers=2, log=lambda *a: None)
+    logs, alphas = TRUE[3] + np.array([-0.02, 0.0, 0.02]), TRUE[5] + np.array([-0.1, 0.0, 0.1])
+    r = maps.alpha_profile([lat], d, logs, alphas, best=TRUE, workers=2, log=lambda *a: None, one_sign=True,
+                           smooth=0.2)
+    assert r["one_sign"] and np.all(np.sign(r["pars"][..., 1]) == np.sign(r["u0_ref"]))
+    assert np.unravel_index(np.nanargmin(r["chi2"]), (3, 3)) == (1, 1)
+
+
+def test_grid_knn_matches_brute_force():
+    """maps._grid_knn returns the same nearest distances as a full sort (also with a periodic axis and with known
+    points outside the grid)."""
+    rng = np.random.default_rng(3)
+    xs, ys = np.linspace(-0.01, 0.016, 40), np.linspace(3.6, 5.6, 37)
+    Kx = rng.uniform(-0.02, 0.03, 3000)
+    Ky = rng.uniform(0, 2 * np.pi, 3000)
+    for period in (None, 2 * np.pi):
+        knn = maps._grid_knn(Kx, Ky, xs, ys, 12, period)
+        for i, j in ((0, 0), (39, 36), (20, 18), (5, 30)):
+            dy = Ky - ys[j]
+            if period:
+                dy = (dy + period / 2) % period - period / 2
+            d = np.hypot((Kx - xs[i]) / (xs[1] - xs[0]), dy / (ys[1] - ys[0]))
+            idx, dd = knn(i, j)
+            assert np.allclose(dd, np.sort(d)[:12]) and np.allclose(d[idx], dd)
