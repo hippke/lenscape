@@ -51,3 +51,11 @@ def test_bisect():
     assert abs(O.bisect(lambda x: x ** 3 - 2, 0, 2) - 2 ** (1 / 3)) < 1e-10
     with pytest.raises(ValueError):
         O.bisect(lambda x: x * x + 1, -1, 1)
+
+
+def test_least_squares_lm_rosenbrock():
+    """Levenberg-Marquardt on the Rosenbrock residuals (10 (y - x^2), 1 - x) reaches the minimum (1, 1)."""
+    from lenscape.optimize import least_squares_lm
+    r = least_squares_lm(lambda p: np.array([10 * (p[1] - p[0] ** 2), 1 - p[0]]), [-1.2, 1.0], [1e-7, 1e-7],
+                         [1.0, 1.0], maxit=200, tol=1e-14)
+    assert np.allclose(r.x, [1, 1], atol=1e-5) and r.fun < 1e-10

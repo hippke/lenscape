@@ -170,26 +170,54 @@ def _relax_rows(rows, chi, pars, logs, logq, cfg, margin, active=None, cols=None
             cands.sort(key=lambda z: z[0])
             new = None
             for c0, x0 in cands[:cfg.get("relax_tries", 2)]:
-                f = lambda y: fx(co.to_x(y))
-                f.coords = co
-                r = F._nm(f, co.from_x(x0), cfg.get("relax_nfev", 600), cfg.get("refine_step", 0.3), 1e-2)
-                if r.fun < best_c - margin:
-                    best_c, new = r.fun, co.to_x(r.x)
+                if cfg.get("optimizer", "nm") != "nm":
+                    rc, ry = F.local_fit(be, _DATA, ls, lq, co.from_x(x0), cfg, cfg.get("refine_step", 0.3),
+                                         cfg.get("relax_nfev", 600))
+                else:
+                    f = lambda y: fx(co.to_x(y))
+                    f.coords = co
+                    r = F._nm(f, co.from_x(x0), cfg.get("relax_nfev", 600), cfg.get("refine_step", 0.3), 1e-2)
+                    rc, ry = r.fun, r.x
+                if rc < best_c - margin:
+                    best_c, new = rc, co.to_x(ry)
             if new is not None:
                 out.append((i, j, best_c, new))
     return out
 
 
+def _near(mask, wrap_j=False):
+    """mask dilated by one cell in each direction (8-neighbourhood); wrap_j: second axis periodic."""
+    out = mask.copy()
+    ni, nj = mask.shape
+    for di in (-1, 0, 1):
+        for dj in (-1, 0, 1):
+            if not (di or dj):
+                continue
+            src = mask[max(0, -di):ni - max(0, di)]
+            if wrap_j:
+                src = np.roll(src, dj, axis=1)
+                out[max(0, di):ni - max(0, -di)] |= src
+            else:
+                src = src[:, max(0, -dj):nj - max(0, dj)]
+                out[max(0, di):ni - max(0, -di), max(0, dj):nj - max(0, -dj)] |= src
+    return out
+
+
 def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log=print, data=None, dchi2_cut=None,
-          seg=5):
+          seg=5, changed_only=True):
     """Repeat neighbour-relaxation sweeps (rows in parallel, isolated processes) until no cell improves.
-    dchi2_cut: only relax cells with Delta chi2 < cut (vs the current minimum) and their 8 neighbours."""
+    dchi2_cut: only relax cells with Delta chi2 < cut (vs the current minimum) and their 8 neighbours.
+    changed_only: after the first sweep, check only cells whose 3 x 3 neighbourhood changed since they were last
+    checked. A cell's refit depends only on its own and its neighbours'
+    values and the fits are deterministic, so the other cells would give the same (rejected) result again: identical
+    output, far fewer refits in late sweeps."""
     global _DATA
     if data is not None:
         _DATA = data
     if _DATA is None:
         _DATA = _default_data()
     chi, pars = chi.copy(), pars.copy()
+    stale = np.ones(chi.shape, bool)                 # inputs changed since the cell was last checked
     for sweep in range(max_sweeps):
         active = None
         if dchi2_cut is not None:
@@ -198,27 +226,39 @@ def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log
             for di in (-1, 0, 1):
                 for dj in (-1, 0, 1):
                     active |= np.roll(np.roll(low, di, 0), dj, 1)
+        if changed_only and sweep > 0:
+            active = stale if active is None else active & stale
+        if active is not None:
             if not active.any():
                 break
             rows_act = np.where(active.any(axis=1))[0]
         else:
             rows_act = np.arange(len(logs))
+        checked = np.ones(chi.shape, bool) if active is None else active.copy()
         # short row segments (seg cells), expensive first (cells near the minimum need the most refits), instead
         # of one chunk of rows per worker: the chunks' costs differed so much that most cores idled at every sweep
         nj = len(logq)
         segs = [(i, list(range(j0, min(j0 + seg, nj)))) for i in rows_act for j0 in range(0, nj, seg)]
+        if active is not None:
+            segs = [(i, c) for i, c in segs if active[i, c].any()]
         lowc = np.nan_to_num(chi - np.nanmin(chi), nan=1e30)
         segs.sort(key=lambda t: lowc[t[0], t[1]].min())
         tasks = {k: ([i], chi, pars, logs, logq, cfg, margin, active, cols) for k, (i, cols) in enumerate(segs)}
         warmup(cfg, _DATA)
         res, _ = run_isolated(_relax_rows, tasks, workers, log=log, desc=f"neighbour refinement, pass {sweep + 1}")
         n = 0
+        changed = np.zeros(chi.shape, bool)
+        for k, (i, cols) in enumerate(segs):
+            if res.get(k) is None:                   # task lost (crash): its cells count as not checked
+                checked[i, cols] = False
         for v in res.values():
             for i, j, c, x in v or []:
                 if c < chi[i, j] or not np.isfinite(chi[i, j]):
                     chi[i, j], pars[i, j] = c, x
+                    changed[i, j] = True
                     n += 1
-        log(f"neighbour refinement, pass {sweep + 1}: {n} cells improved")
+        stale = (stale & ~checked) | _near(changed)
+        log(f"neighbour refinement, pass {sweep + 1}: {int(checked.sum())} cells checked, {n} improved")
         if n == 0:
             break
     return chi, pars

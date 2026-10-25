@@ -42,7 +42,8 @@ Each fit evaluates χ² at 20 trajectory angles and refines the best four.
    fits, every cell is offered its neighbours' solutions: one χ² evaluation decides whether a refit is worthwhile.
 3. **Lattice-point fits** at fixed (*s*, *q*), started from the best cell solutions within one cell.
 4. **Neighbour refinement.** Every point is refitted from its neighbours' solutions, in sweeps, until no point
-   improves by more than 1.
+   improves by more than 1. After the first sweep only points next to a point that changed are checked: the others
+   would repeat a refit with unchanged inputs (identical result, fewer refits).
 5. **Outlier recalculation.** A point whose χ² exceeds both neighbours along an axis by more than 8 is a stuck fit
    in practice; it gets a deep search from about 1000 starts plus its neighbours' solutions.
 

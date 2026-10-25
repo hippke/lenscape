@@ -110,6 +110,22 @@ refinement and outlier recalculation again.
 All local minima in the trajectory angle at every lattice point (fits from `n_alpha` angles, distinct minima kept):
 rows of (log s, log q, χ², t0, u0, tE, α, log ρ). This is how (log s, α) maps are usually drawn.
 
+### `alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=None, n_starts=3, margin=1.0, max_sweeps=30, changed_only=True)`
+Profile χ² over (log s, α): at every grid point χ² minimised over all other parameters including log q, so the map
+has a value everywhere. Started from the nearest known solutions of `previous` (lattices, cells, `alpha_minima`
+rows), then neighbour refinement (α periodic). Returns `dict(logs, alphas, chi2 (ns, na), pars (ns, na, 7),
+chi2_ref, wall)`.
+
+**Neighbour refinement passes** (in `lattice`, `densify`, `polish`, `alpha_profile`): after the first pass, only
+points are checked that have a point changed in the previous pass in their 3 × 3 neighbourhood (or were not checked
+before). A refit depends only on the point's own and its neighbours' values and the fits are deterministic, so the
+skipped points would repeat a rejected refit: the result is identical, with far fewer refits in later passes.
+`changed_only=False` (here and in `grid.relax`) checks every point in every pass.
+
+### `alpha_profile_refine(result, data, best=None, cfg=None, workers=None, margin=1.0, max_sweeps=30)`
+More neighbour-refinement passes for an `alpha_profile` result, e.g. one stopped at `max_sweeps`. Neighbours'
+solutions of either sign of u0 are tried, each at its own model α.
+
 ---
 
 ## `lenscape.fit` — fits
@@ -165,14 +181,33 @@ Methods `to_x(y)`, `from_x(x)`, `steps(y, scale)`.
   physical box (log ρ ∈ [−5, −0.5], tE ∈ [0.5, 1000], |u0| ≤ 5) are clamped and penalised.
 - `fluxes(A, data)` — `(fs, fb)` per data set for magnifications `A` at the data times.
 - `residuals(backend, p, data)` — residuals in units of the errors, (f − model)/e.
+- `chi2_residuals(backend, p, data)` — a residual vector whose sum of squares is `chi2` (for binned data up to a
+  constant; two entries per binned night); input of least-squares optimisers.
 - `NumbaHybrid(tol, hexeps, ctol, ld=0.0, reltol=None)` — the backend class: `lc(p, t)` returns A(t).
   `ld` is the linear limb-darkening coefficient.
 - `register_backend(kind, cls)` — make a backend class available to `make_backend`.
+
+## `lenscape.optimize` — optimisers
+
+- `minimize(fun, x0, method="Nelder-Mead", options=None)` — SciPy's Nelder–Mead (copied, bit-identical).
+- `least_squares_lm(fun, x0, h, cap, maxit=50, tol=1e-3)` — Levenberg–Marquardt for `sum(fun(x)**2)` with
+  forward-difference steps `h` (choose them above the numerical noise of `fun`) and a largest step `cap` per
+  parameter; returns `OptimizeResult(x, fun, nfev, nit)`.
+- `bisect(f, a, b)` — root by bisection.
+
+---
 
 ## `lenscape.config` — settings
 
 `DEFAULT` (settings of fits and maps), `GRID_BACKEND`, `REFINE_BACKEND`. Copy and modify:
 `cfg = dict(lenscape.config.DEFAULT, n_screen=6, seed=dict(t0=..., u0=..., tE=..., logrho=...))`.
+
+Speed options of the maps (off by default):
+
+| key | effect |
+|---|---|
+| `optimizer="nm_lm"` | local fits as a short Nelder–Mead exploration (`explore_nfev`, default 100 evaluations) followed by Levenberg–Marquardt on the residual vector (`optimize.least_squares_lm`), instead of Nelder–Mead alone. Used by the lattice-point fits, neighbour refinement, `densify`, `polish`, `alpha_profile` and the refinement step of `alpha_minima` and `fit_point`; cell fits stay Nelder–Mead. MOA-2022-BLG-091: densified block 3.1× less CPU (99.8 % of points in the same Δχ² band as Nelder–Mead), (log s, α) profile 4.0× |
+| `interp_start=True` | `densify`: one extra start interpolated from the equally nearest known solutions (the bilinear interpolation on a lattice refined by 2), fitted by Levenberg–Marquardt alone (~20 light curves); the number of nearest-solution starts drops from `n_starts` to `n_starts − 1` |
 
 ---
 

@@ -272,3 +272,47 @@ def bisect(f, a, b, xtol=1e-10, maxiter=200):
         else:
             b = m
     return 0.5 * (a + b)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The code below is lenscape's own (GPL-3.0-or-later, like the rest of the package), not copied from SciPy.
+
+def least_squares_lm(fun, x0, h, cap, maxit=50, tol=1e-3, lam0=1e-3):
+    """Levenberg-Marquardt for sum(fun(x)**2) (RTModel-style, Bozza 2024): forward-difference Jacobian with steps h
+    (larger than the numerical noise of fun, not ~1e-8), damping lam * diag(J^T J), steps scaled down so that no
+    |dx_k| exceeds cap_k. Stops when a step gains less than tol or no damping gives a decrease.
+    Returns OptimizeResult(x, fun = sum of squares, nfev, nit)."""
+    x = np.array(x0, dtype=float)
+    h, cap = np.asarray(h, float), np.asarray(cap, float)
+    n = len(x)
+    r = fun(x)
+    c = float(r @ r)
+    nfev, lam, it = 1, lam0, 0
+    for it in range(1, maxit + 1):
+        J = np.empty((len(r), n))
+        for k in range(n):
+            xk = x.copy()
+            xk[k] += h[k]
+            J[:, k] = (fun(xk) - r) / h[k]
+        nfev += n
+        g = J.T @ r
+        JTJ = J.T @ J
+        D = np.diag(np.diag(JTJ) + 1e-12)
+        gain = None
+        while lam < 1e8:
+            d = -np.linalg.solve(JTJ + lam * D, g)
+            sc = np.max(np.abs(d) / cap)
+            if sc > 1:
+                d /= sc
+            rn = fun(x + d)
+            nfev += 1
+            cn = float(rn @ rn)
+            if cn < c:
+                gain = c - cn
+                x, r, c = x + d, rn, cn
+                lam = max(lam / 5, 1e-7)
+                break
+            lam *= 4
+        if gain is None or gain < tol:
+            break
+    return OptimizeResult(x=x, fun=c, nfev=nfev, nit=it, success=gain is not None, status=0, message="")

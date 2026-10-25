@@ -15,7 +15,7 @@ terminal; LENSCAPE_PROGRESS=0/1 forces them off/on).
 """
 import os, time
 import numpy as np
-from .optimize import minimize
+from .optimize import minimize, least_squares_lm
 from . import config as C, grid as G, data as D, fit as F, model as M, amr
 
 BANDS = (4.0, 16.0, 36.0, 64.0, 100.0)
@@ -25,15 +25,31 @@ def _workers(n):
     return n or max(1, (os.cpu_count() or 2) - 1)
 
 
-def _point_from_starts(ls, lq, starts, cfg):
-    """Lattice point (s, q fixed) from the given start vectors (t0, u0, tE, alpha, log rho, ...)."""
+def _point_from_starts(ls, lq, starts, cfg, lm_start=None):
+    """Lattice point (s, q fixed) from the given start vectors (t0, u0, tE, alpha, log rho, ...). lm_start: an
+    extra start close to the solution (interpolated from neighbouring known solutions), fitted by Levenberg-Marquardt
+    alone (~20 light curves)."""
     be = F.make_backend(cfg["grid_backend"])
     co = F.Coords(cfg.get("coords", "teff"))
     fx = lambda y: M.chi2(be, F.full_p(co.to_x(y), ls, lq), G._DATA)
     best = (np.inf, None)
+    if lm_start is not None and co.kind == "teff":
+        y = co.from_x(np.asarray(lm_start, float))
+        fr = lambda y: M.chi2_residuals(be, np.asarray(F.full_p(co.to_x(y), ls, lq), float), G._DATA)
+        q = least_squares_lm(fr, y, F.LM_STEP, F.LM_CAP)
+        c = fx(q.x)
+        if np.isfinite(c):
+            best = (c, co.to_x(q.x))
     for x0 in starts:
         y = co.from_x(np.asarray(x0[:5], float))
         c = fx(y)
+        if cfg.get("optimizer", "nm") != "nm":
+            c1, y1 = F.local_fit(be, G._DATA, ls, lq, y, cfg, 0.3, 1000)
+            if c1 < c:
+                c, y = c1, y1
+            if c < best[0]:
+                best = (c, co.to_x(y))
+            continue
         for step in (0.3, 0.1):
             sim = np.vstack([y] + [y + np.eye(5)[k] * s for k, s in enumerate(co.steps(y, step))])
             r = minimize(fx, y, method="Nelder-Mead", options=dict(maxfev=1000, adaptive=True, initial_simplex=sim,
@@ -43,6 +59,25 @@ def _point_from_starts(ls, lq, starts, cfg):
         if c < best[0]:
             best = (c, co.to_x(y))
     return best
+
+
+def _interp_start(known, dist, tie=0.05, max_dist=1.5):
+    """Mean (in fit coordinates, alpha unwrapped) of the equally nearest known solutions: on a lattice refined by 2,
+    the bilinear interpolation at a cell centre (4 corners) or edge midpoint (2 ends), the point itself if known.
+    None if they are farther than max_dist (new-lattice steps), differ in the sign of u0 or spread in alpha > 0.3."""
+    k = np.argsort(dist)[:8]
+    k = k[dist[k] <= dist[k[0]] + tie]
+    if dist[k[0]] > max_dist:
+        return None
+    P = np.array([known[m][3] for m in k], float)
+    if len(set(np.sign(P[:, 1]))) > 1:
+        return None
+    co = F.Coords("teff")
+    Y = np.array([co.from_x(p) for p in P])
+    Y[:, 3] = Y[0, 3] + (Y[:, 3] - Y[0, 3] + np.pi) % (2 * np.pi) - np.pi
+    if np.ptp(Y[:, 3]) > 0.3:
+        return None
+    return co.to_x(Y.mean(0))
 
 
 def _prepare(data, cfg, best, bin_wings):
@@ -157,6 +192,7 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
     workers = _workers(workers)
     logs, logq = np.asarray(logs, float), np.asarray(logq, float)
     cfg, fitdata = _prepare(data, cfg, best, bin_wings)
+    interp = bool(cfg.get("interp_start", False))
     known = _known_solutions(previous)
     K = np.array([(a, b) for a, b, _, _ in known])
     # distances in units of the new lattice step, so that s and q count alike
@@ -172,8 +208,10 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
             near = np.argsort(dist)[:4 * n_starts]
             # the nearest known solution always (a point of an earlier lattice keeps its own solution as a start),
             # then the best chi2 among the close ones
-            near = [near[0]] + sorted(near[1:], key=lambda k: (dist[k] > 2.0, known[k][2]))[:n_starts - 1]
-            tasks[(i, j)] = (float(ls), float(lq), [np.asarray(known[k][3], float) for k in near], cfg)
+            ns_ = n_starts - 1 if interp else n_starts
+            near = [near[0]] + sorted(near[1:], key=lambda k: (dist[k] > 2.0, known[k][2]))[:ns_ - 1]
+            tasks[(i, j)] = (float(ls), float(lq), [np.asarray(known[k][3], float) for k in near], cfg,
+                             _interp_start(known, dist) if interp else None)
     G.warmup(cfg, fitdata)
     res, _ = G.run_isolated(_point_from_starts, tasks, workers, log=log, desc="lattice point fits")
     chi = np.full((len(logs), len(logq)), np.nan)
@@ -230,6 +268,12 @@ def _alpha_minima_point(ls, lq, x0, cfg, n_alpha, tol_alpha):
         x = np.array(x0, float)
         x[3] = a
         y = co.from_x(x)
+        if cfg.get("optimizer", "nm") != "nm" and co.kind == "teff":
+            # exploration from this angle as before (600), then Levenberg-Marquardt instead of the second Nelder-Mead
+            fr = lambda y: M.chi2_residuals(be, np.asarray(F.full_p(co.to_x(y), ls, lq), float), G._DATA)
+            c, y = F.nm_then_lm(fx, fr, y, None, 600)
+            found.append((float(c), co.to_x(y)))
+            continue
         r = minimize(fx, y, method="Nelder-Mead", options=dict(maxfev=600, adaptive=True))
         y = r.x
         sim = np.vstack([y] + [y + np.eye(5)[k] * s for k, s in enumerate(co.steps(y, 0.1))])
@@ -277,29 +321,123 @@ def _sa_coords(p):
     return np.array([t0, u0 * tE, np.log(tE), p[4], p[6] + np.log10(tE)])
 
 
+# Levenberg-Marquardt steps and caps in the (log s, alpha) coordinates (t0, t_eff, ln tE, log q, log t_*)
+SA_LM_STEP = np.array([1e-4, 1e-5, 1e-4, 1e-4, 1e-3])
+SA_LM_CAP = np.array([0.3, 0.05, 0.1, 0.05, 0.2])
+
+
 def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0):
     """Best fit at fixed (log s, alpha) from 7-vector starts (their log s and alpha are replaced). cand/cval: in
     refinement sweeps, refit only if a start already beats cval - margin with one chi2 evaluation."""
     be = F.make_backend(cfg["grid_backend"])
-    f = lambda y: M.chi2(be, _sa_vector(y, ls, al), G._DATA)
-    ys = [_sa_coords(np.asarray(s, float)) for s in starts]
+    als = np.broadcast_to(np.asarray(al, float), (len(starts),))    # model alpha per start (u0 signs may differ)
+    ys = [(_sa_coords(np.asarray(s, float)), a) for s, a in zip(starts, als)]
     if cand is not None:
-        ys = [y for y in ys if f(y) < cval - margin]
+        ys = [(y, a) for y, a in ys if M.chi2(be, _sa_vector(y, ls, a), G._DATA) < cval - margin]
         if not ys:
-            return None
+            return (np.inf, None)                      # nothing to refit (None is reserved for a lost task)
     best = (np.inf, None)
-    for y in ys:
-        c = f(y)
-        for step in (0.3, 0.1):
-            st = np.array([0.05, 0.1 * abs(y[1]) + 1e-3, 0.1, 0.1, 0.1]) * step
-            sim = np.vstack([y] + [y + np.eye(5)[k] * st[k] for k in range(5)])
-            r = minimize(f, y, method="Nelder-Mead", options=dict(maxfev=1000, adaptive=True, initial_simplex=sim,
-                                                                 fatol=1e-2))
-            if r.fun < c:
-                c, y = r.fun, r.x
+    for y, al in ys:
+        c, y1 = _sa_fit_one(be, ls, al, y, cfg)
         if c < best[0]:
-            best = (c, _sa_vector(y, ls, al))
+            best = (c, _sa_vector(y1, ls, al))
     return best
+
+
+def _sa_fit_one(be, ls, al, y, cfg):
+    """One start y (coordinates of _sa_coords) at fixed (log s, model alpha al): (chi2, y)."""
+    f = lambda y: M.chi2(be, _sa_vector(y, ls, al), G._DATA)
+    if cfg.get("optimizer", "nm") != "nm":
+        fr = lambda y: M.chi2_residuals(be, _sa_vector(y, ls, al), G._DATA)
+        st = np.array([0.05, 0.1 * abs(y[1]) + 1e-3, 0.1, 0.1, 0.1]) * 0.3
+        sim = np.vstack([y] + [y + np.eye(5)[k] * st[k] for k in range(5)])
+        c, y1 = F.nm_then_lm(f, fr, y, sim, cfg.get("explore_nfev", 100), SA_LM_STEP, SA_LM_CAP)
+        c0 = f(y)
+        return (c0, y) if c0 < c else (c, y1)
+    c = f(y)
+    for step in (0.3, 0.1):
+        st = np.array([0.05, 0.1 * abs(y[1]) + 1e-3, 0.1, 0.1, 0.1]) * step
+        sim = np.vstack([y] + [y + np.eye(5)[k] * st[k] for k in range(5)])
+        r = minimize(f, y, method="Nelder-Mead", options=dict(maxfev=1000, adaptive=True, initial_simplex=sim,
+                                                             fatol=1e-2))
+        if r.fun < c:
+            c, y = r.fun, r.x
+    return c, y
+
+
+def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_sweeps, changed_only, log):
+    """Neighbour refinement of a (log s, alpha) profile map (alpha periodic): a point is refitted from the solutions
+    of neighbours better by > margin, each at its own model alpha (a neighbour with the other sign of u0 is fitted
+    at alpha - pi or alpha + pi, so solutions of both signs spread)."""
+    model_alpha = lambda p, al: al if np.sign(p[1]) == np.sign(u0_ref) else al - np.pi
+    ns, na = chi.shape
+    chi, pars = chi.copy(), pars.copy()
+    stale = np.ones(chi.shape, bool)                 # 3 x 3 neighbourhood changed since the point was last checked
+    for sweep in range(max_sweeps):
+        # after the first sweep only stale points (alpha periodic): the others would repeat a rejected refit with
+        # the same inputs (see grid.relax)
+        need = stale if (sweep > 0 and changed_only) else np.ones(chi.shape, bool)
+        checked = need.copy()
+        tasks = {}
+        for i in range(ns):
+            for j in range(na):
+                if not need[i, j]:
+                    continue
+                nb = [(i + a, (j + b) % na) for a in (-1, 0, 1) for b in (-1, 0, 1) if (a or b) and 0 <= i + a < ns]
+                cand = [pars[k] for k in nb if np.isfinite(chi[k]) and (not np.isfinite(chi[i, j])
+                                                                        or chi[k] < chi[i, j] - margin)]
+                if cand:
+                    als = [model_alpha(c, alphas[j]) for c in cand]
+                    cv = float(chi[i, j]) if np.isfinite(chi[i, j]) else np.inf
+                    tasks[(i, j)] = (float(logs[i]), als, cand, cfg, True, cv, margin)
+        if not tasks:
+            break
+        res, _ = G.run_isolated(_sa_fit, tasks, workers, log=log, desc=f"neighbour refinement, pass {sweep + 1}")
+        n = 0
+        changed = np.zeros(chi.shape, bool)
+        for k in tasks:
+            if k not in res or res[k] is None:          # task lost (crash): check again next sweep
+                checked[k] = False
+        for k, v in res.items():
+            if v is not None and v[1] is not None and (v[0] < chi[k] - 1e-9 or not np.isfinite(chi[k])):
+                chi[k], pars[k] = v
+                changed[k] = True
+                n += 1
+        stale = (stale & ~checked) | G._near(changed, True)
+        log(f"neighbour refinement, pass {sweep + 1}: {len(tasks)} points checked, {n} improved")
+        if n == 0:
+            break
+    return chi, pars
+
+
+def alpha_profile_refine(result, data, best=None, cfg=None, workers=None, margin=1.0, max_sweeps=30, bin_wings=True,
+                         log=print, changed_only=True):
+    """More neighbour-refinement sweeps for an alpha_profile result (e.g. one stopped at max_sweeps). Returns a new
+    result dict."""
+    workers = _workers(workers)
+    cfg, fitdata = _prepare(data, cfg, best, bin_wings)
+    chi, pars = np.asarray(result["chi2"], float), np.asarray(result["pars"], float)
+    u0_ref = _profile_u0_ref(result)
+    t0 = time.time()
+    G.warmup(cfg, fitdata)
+    chi, pars = _alpha_sweeps(chi, pars, result["logs"], result["alphas"], u0_ref, cfg, workers, margin, max_sweeps,
+                              changed_only, log)
+    ref = float(min(np.nanmin(chi), result.get("chi2_ref", np.inf)))
+    log(f"done in {time.time() - t0:.0f}s; lowest chi2 {ref:.2f}")
+    return dict(logs=np.asarray(result["logs"]), alphas=np.asarray(result["alphas"]), chi2=chi, pars=pars,
+                chi2_ref=ref, wall=time.time() - t0, u0_ref=float(u0_ref))
+
+
+def _profile_u0_ref(result):
+    """The sign of u0 that a (log s, alpha) profile counts at its plotted alpha (the other sign at alpha + pi). Stored
+    as u0_ref; for older results: the sign at the points whose model alpha equals the plotted alpha (not the sign of
+    the best point: after refinement it may be the mirror solution, counted at alpha + pi)."""
+    if "u0_ref" in result:
+        return float(result["u0_ref"])
+    pars, alphas = np.asarray(result["pars"], float), np.asarray(result["alphas"], float)
+    d = np.abs((pars[..., 5] - alphas[None, :] + np.pi) % (2 * np.pi) - np.pi)
+    same = np.isfinite(d) & (d < 1e-6)
+    return float(np.sign(np.sum(np.sign(pars[..., 1][same]))))
 
 
 def _plot_alpha(p, u0_ref):
@@ -308,7 +446,7 @@ def _plot_alpha(p, u0_ref):
 
 
 def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=None, n_starts=3, margin=1.0,
-                  max_sweeps=30, bin_wings=True, log=print):
+                  max_sweeps=30, bin_wings=True, log=print, changed_only=True):
     """Profile chi2 over (log s, alpha): at every grid point, chi2 minimised over all other parameters including
     log q, so the map has a value everywhere (unlike a projection of lattice solutions). alpha is in the convention
     of (log s, alpha) panels: solutions with the opposite sign of u0 to the best fit are counted at alpha + pi, and
@@ -364,28 +502,8 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
         if v is not None and v[1] is not None:
             chi[i, j], pars[i, j] = v
     ST("Neighbour refinement", "refit points whose neighbours found a better solution")
-    ns, na = chi.shape
-    for sweep in range(max_sweeps):
-        tasks = {}
-        for i in range(ns):
-            for j in range(na):
-                nb = [(i + a, (j + b) % na) for a in (-1, 0, 1) for b in (-1, 0, 1) if (a or b) and 0 <= i + a < ns]
-                cand = [pars[k] for k in nb if np.isfinite(chi[k]) and chi[k] < chi[i, j] - margin
-                        and np.sign(pars[k][1]) == np.sign(pars[i, j][1] if np.all(np.isfinite(pars[i, j])) else pars[k][1])]
-                if cand:
-                    al = pars[i, j][5] if np.all(np.isfinite(pars[i, j])) else model_alpha(cand[0], alphas[j])
-                    tasks[(i, j)] = (float(logs[i]), float(al), cand, cfg, True, float(chi[i, j]), margin)
-        if not tasks:
-            break
-        res, _ = G.run_isolated(_sa_fit, tasks, workers, log=log, desc=f"neighbour refinement, pass {sweep + 1}")
-        n = 0
-        for k, v in res.items():
-            if v is not None and v[1] is not None and v[0] < chi[k] - 1e-9:
-                chi[k], pars[k] = v
-                n += 1
-        log(f"neighbour refinement, pass {sweep + 1}: {len(tasks)} points checked, {n} improved")
-        if n == 0:
-            break
+    chi, pars = _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_sweeps, changed_only, log)
     ref = float(min(np.nanmin(chi), min(c for _, c in known)))
     log(f"done in {time.time() - t0:.0f}s; lowest chi2 {ref:.2f}")
-    return dict(logs=logs, alphas=alphas, chi2=chi, pars=pars, chi2_ref=ref, wall=time.time() - t0)
+    return dict(logs=logs, alphas=alphas, chi2=chi, pars=pars, chi2_ref=ref, wall=time.time() - t0,
+                u0_ref=float(u0_ref))

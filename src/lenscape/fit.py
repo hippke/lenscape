@@ -1,6 +1,6 @@
 """Grid-point optimisation strategies: s, q fixed; (t0, u0, tE, alpha, log rho) optimised."""
 import numpy as np
-from .optimize import minimize
+from .optimize import minimize, least_squares_lm
 from . import model
 
 SEED = None          # default start vector dict(t0, u0, tE, logrho); per fit: cfg["seed"] (see seed_from_data)
@@ -209,6 +209,47 @@ def _nm(f, y0, maxfev, step_scale, fatol=None):
                                                                **({"fatol": fatol} if fatol else {})))
 
 
+# Levenberg-Marquardt in the t_eff coordinates (t0, t_eff, ln tE, alpha, log t_*): forward-difference steps (well above
+# the integration noise of the grid backend) and largest step per iteration
+LM_STEP = np.array([1e-4, 1e-5, 1e-4, 1e-4, 1e-3])
+LM_CAP = np.array([0.3, 0.05, 0.1, 0.05, 0.2])
+
+
+def nm_then_lm(f, fr, y0, sim, n_explore, h=LM_STEP, cap=LM_CAP):
+    """A short Nelder-Mead exploration from y0 (initial simplex sim, or the default simplex if None; n_explore
+    evaluations) to reach the right valley, then Levenberg-Marquardt on the residual vector fr to converge (from
+    distant starts LM alone stops in a nearer minimum). f: chi2; fr: residuals with sum of squares = chi2 + const.
+    Returns (chi2, y)."""
+    opts = dict(maxfev=n_explore, adaptive=True, fatol=1e-2)
+    if sim is not None:
+        opts["initial_simplex"] = sim
+    r = minimize(f, y0, method="Nelder-Mead", options=opts)
+    q = least_squares_lm(fr, r.x, h, cap)
+    if q.fun < r.fun or not np.isfinite(r.fun):
+        c = f(q.x)                      # chi2 itself (binned data: the residuals' sum of squares omits a constant)
+        if c < r.fun:
+            return c, q.x
+    return r.fun, r.x
+
+
+def local_fit(be, data, ls, lq, y0, cfg, step, maxfev):
+    """Local fit at fixed (s, q) from y0 (optimiser coordinates). cfg["optimizer"]:
+    "nm" (default): Nelder-Mead, maxfev evaluations, initial simplex scaled by step.
+    "nm_lm": nm_then_lm with cfg["explore_nfev"] (default 100) Nelder-Mead evaluations; 2-3x fewer light curves than
+    Nelder-Mead at the same quality (MOA-2022-BLG-091: densified block 3.1x less CPU, 99.8 % of points in the same
+    Delta chi2 band). Only for the "teff" coordinates.
+    Returns (chi2, y)."""
+    co = Coords(cfg.get("coords", "teff"))
+    f = lambda y: model.chi2(be, full_p(co.to_x(y), ls, lq), data)
+    f.coords = co
+    if cfg.get("optimizer", "nm") == "nm" or co.kind != "teff":
+        r = _nm(f, y0, maxfev, step, 1e-2)
+        return r.fun, r.x
+    fr = lambda y: model.chi2_residuals(be, np.asarray(full_p(co.to_x(y), ls, lq), float), data)
+    sim = None if step is None else np.vstack([y0] + [y0 + np.eye(5)[k] * st for k, st in enumerate(co.steps(y0, step))])
+    return nm_then_lm(f, fr, y0, sim, cfg.get("explore_nfev", 100))
+
+
 def fit_point_screen_d(ls, lq, data, cfg, warm=None):
     """Screen strategy in configurable coordinates with a scaled initial simplex.
     warm: optional neighbour solutions (t0, u0, tE, alpha, log rho) added as extra starts."""
@@ -228,10 +269,19 @@ def fit_point_screen_d(ls, lq, data, cfg, warm=None):
         trials.append((r.fun, r.x))
     trials.sort(key=lambda z: z[0])
     best = trials[0]
+    lm = cfg.get("optimizer", "nm") != "nm" and co.kind == "teff"
+    if lm:
+        fr = lambda y: model.chi2_residuals(be, np.asarray(full_p(co.to_x(y), ls, lq), float), data)
     for _, y in trials[:2]:
-        r = _nm(f, y, cfg.get("n_refine", 1500), cfg.get("refine_step", None if sc is None else 0.3 * sc), 1e-2)
-        if r.fun < best[0]:
-            best = (r.fun, r.x)
+        rs = cfg.get("refine_step", None if sc is None else 0.3 * sc)
+        if lm:                                          # refinement by nm_then_lm (see local_fit)
+            sim = None if rs is None else np.vstack([y] + [y + np.eye(5)[k] * st for k, st in enumerate(co.steps(y, rs))])
+            c, yr = nm_then_lm(f, fr, y, sim, cfg.get("explore_nfev", 100))
+        else:
+            r = _nm(f, y, cfg.get("n_refine", 1500), rs, 1e-2)
+            c, yr = r.fun, r.x
+        if c < best[0]:
+            best = (c, yr)
     return best[0], co.to_x(best[1])
 
 
@@ -310,6 +360,8 @@ def fit_point_box(box, data, cfg, warm=None):
         trials.append((r.fun, r.x))
     trials.sort(key=lambda z: z[0])
     best = trials[0]
+    # refinement by Nelder-Mead also with optimizer="nm_lm": Levenberg-Marquardt in the sigmoid coordinates of s, q
+    # was worse (MOA-2022-BLG-091, 30 cells: 13 worse by > 1 than Nelder-Mead)
     for _, y in trials[:2]:
         r = nm(y, cfg.get("n_refine", 1500), cfg.get("refine_step", 0.3))
         if r.fun < best[0]:

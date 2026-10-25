@@ -152,3 +152,140 @@ def test_caustic_starts_recover_a_crossing_from_a_rough_start():
                                                     caustic_only=True))
     assert c1 < len(d) + 5 * np.sqrt(2 * len(d)) < c0
     assert abs(x1[2] - CROSS[2]) < 0.5
+
+
+def test_residual_vectors_reproduce_chi2():
+    """model.chi2_residuals: sum of squares = chi2 (unbinned), = chi2 minus a parameter-independent constant (binned)."""
+    d = synthetic(n=120)
+    be = F.make_backend(C.GRID_BACKEND)
+    b = D.bin_wings(d, TRUE[0], TRUE[2])
+    off = []
+    for dp in (np.zeros(7), np.array([0.3, 0.01, -1.0, 0.002, 0.05, 0.02, 0.1])):
+        p = TRUE + dp
+        r = M.chi2_residuals(be, p, d)
+        assert abs(r @ r - M.chi2(be, p, d)) < 1e-8 * M.chi2(be, p, d)
+        rb = M.chi2_residuals(be, p, b)
+        off.append(M.chi2(be, p, b) - rb @ rb)
+    assert abs(off[0] - off[1]) < 1e-6 * abs(off[0]) + 1e-6
+
+
+def test_nm_lm_local_fit_and_densify():
+    """optimizer="nm_lm" (short Nelder-Mead, then Levenberg-Marquardt) recovers the truth from a perturbed start and
+    gives the same densified map minimum as Nelder-Mead."""
+    d = synthetic(n=60, efac=4.0)
+    cfg = dict(C.DEFAULT, optimizer="nm_lm")
+    be = F.make_backend(C.GRID_BACKEND)
+    co = F.Coords("teff")
+    x0 = np.r_[TRUE[:3], TRUE[5:]] + np.array([0.2, 0.005, 1.0, 0.01, 0.1])
+    c, y = F.local_fit(be, d, TRUE[3], TRUE[4], co.from_x(x0), cfg, 0.3, 1000)
+    assert c <= M.chi2(be, TRUE, d) + 1.0
+    coarse = maps.lattice(d, TRUE[3] + np.array([-0.03, 0.03]), TRUE[4] + np.array([-0.15, 0.15]), best=TRUE,
+                          workers=2, log=lambda *a: None)
+    fine = maps.densify([coarse], d, TRUE[3] + np.array([-0.03, 0.0, 0.03]), TRUE[4] + np.array([-0.15, 0.0, 0.15]),
+                        best=TRUE, cfg=cfg, workers=2, log=lambda *a: None)
+    assert np.unravel_index(np.nanargmin(fine["chi2"]), (3, 3)) == (1, 1)
+    fine2 = maps.densify([coarse], d, TRUE[3] + np.array([-0.03, 0.0, 0.03]), TRUE[4] + np.array([-0.15, 0.0, 0.15]),
+                         best=TRUE, cfg=dict(cfg, interp_start=True), workers=2, log=lambda *a: None)
+    assert np.unravel_index(np.nanargmin(fine2["chi2"]), (3, 3)) == (1, 1)
+    assert np.nanmin(fine2["chi2"]) <= np.nanmin(fine["chi2"]) + 1.0
+
+
+def test_interp_start_is_the_mean_of_the_nearest():
+    known = [(0.0, 0.0, 10.0, np.array([0.0, 0.1, 20.0, 6.2, -3.0])), (1.0, 0.0, 11.0, np.array([1.0, 0.1, 22.0, 0.1, -3.0])),
+             (5.0, 5.0, 9.0, np.array([0.0, -0.1, 20.0, 1.0, -3.0]))]
+    dist = np.array([1.0, 1.0, 7.0])
+    x = maps._interp_start(known, dist)
+    assert abs(x[0] - 0.5) < 1e-12 and abs(np.mod(x[3], 2 * np.pi) - np.mod(0.5 * (6.2 + 0.1 + 2 * np.pi), 2 * np.pi)) < 1e-9
+    assert maps._interp_start(known, np.array([3.0, 3.0, 7.0])) is None              # too far
+
+
+def test_near_mask():
+    from lenscape.grid import _near
+    m = np.zeros((4, 5), bool)
+    m[0, 0] = True
+    assert _near(m).sum() == 4 and _near(m)[1, 1] and not _near(m)[0, 4]
+    w = _near(m, wrap_j=True)
+    assert w.sum() == 6 and w[0, 4] and w[1, 4] and not w[3, 0]
+
+
+def _logged():
+    lines = []
+    return lines, lambda *a: lines.append(" ".join(map(str, a)))
+
+
+def test_relax_changed_only_is_identical():
+    """Neighbour refinement checking only cells next to a change gives exactly the result of checking all cells,
+    with fewer checks: a 6 x 6 map where only one corner has the good solution, so it spreads over several sweeps."""
+    from lenscape import grid as G
+    d = synthetic(n=60, efac=4.0)
+    cfg = dict(C.DEFAULT, seed=dict(t0=0.0, u0=0.08, tE=25.0, logrho=-2.8))
+    be = F.make_backend(C.GRID_BACKEND)
+    logs = TRUE[3] + np.linspace(-0.02, 0.02, 6)
+    logq = TRUE[4] + np.linspace(-0.1, 0.1, 6)
+    good = np.r_[TRUE[:3], TRUE[5:]]
+    bad = good + np.array([1.5, 0.02, 6.0, 0.15, 0.3])
+    pars = np.tile(bad, (6, 6, 1))
+    pars[0, 0] = good
+    chi = np.array([[M.chi2(be, F.full_p(pars[i, j], ls, lq), d) for j, lq in enumerate(logq)]
+                    for i, ls in enumerate(logs)])
+    out = {}
+    for flag in (False, True):
+        lines, log = _logged()
+        c, p = G.relax(chi, pars, logs, logq, cfg, workers=2, data=d, log=log, max_sweeps=12, changed_only=flag)
+        nchk = sum(int(l.split(": ")[1].split()[0]) for l in lines if "cells checked" in l)
+        out[flag] = (c, p, nchk, len([l for l in lines if "cells checked" in l]))
+    assert out[True][3] >= 3                                        # several sweeps
+    assert np.array_equal(out[True][0], out[False][0]) and np.array_equal(out[True][1], out[False][1])
+    assert out[True][2] < out[False][2]
+
+
+def test_alpha_profile_changed_only_is_identical():
+    d = synthetic(n=60, efac=4.0)
+    lat = maps.lattice(d, TRUE[3] + np.array([-0.03, 0.03]), TRUE[4] + np.array([-0.15, 0.15]), best=TRUE,
+                       workers=2, log=lambda *a: None)
+    logs, alphas = TRUE[3] + np.linspace(-0.03, 0.03, 5), TRUE[5] + np.linspace(-0.3, 0.3, 7)
+    r = {flag: maps.alpha_profile([lat], d, logs, alphas, best=TRUE, workers=2, log=lambda *a: None,
+                                  changed_only=flag) for flag in (False, True)}
+    assert np.array_equal(r[True]["chi2"], r[False]["chi2"], equal_nan=True)
+    assert np.array_equal(r[True]["pars"], r[False]["pars"], equal_nan=True)
+
+
+def test_alpha_maps_with_nm_lm():
+    """alpha_profile and alpha_minima with optimizer="nm_lm": minimum at the truth, as with Nelder-Mead."""
+    d = synthetic(n=60, efac=4.0)
+    cfg = dict(C.DEFAULT, optimizer="nm_lm")
+    lat = maps.lattice(d, TRUE[3] + np.array([-0.03, 0.03]), TRUE[4] + np.array([-0.15, 0.15]), best=TRUE,
+                       workers=2, log=lambda *a: None)
+    alphas = TRUE[5] + np.array([-0.1, 0.0, 0.1])
+    r = maps.alpha_profile([lat], d, TRUE[3] + np.array([-0.02, 0.0, 0.02]), alphas, best=TRUE, cfg=cfg, workers=2,
+                           log=lambda *a: None)
+    assert np.all(np.isfinite(r["chi2"])) and np.unravel_index(np.nanargmin(r["chi2"]), (3, 3)) == (1, 1)
+    m = maps.alpha_minima(lat, d, best=TRUE, cfg=cfg, workers=2, n_alpha=8, log=lambda *a: None)
+    assert np.min(m[:, 2]) <= np.nanmin(lat["chi2"]) + 1.0
+
+
+def test_alpha_profile_refine_spreads_the_other_u0_sign():
+    """alpha_profile_refine: a better solution with the other sign of u0 (counted at alpha + pi) spreads to its
+    neighbours, and the map never gets worse."""
+    d = synthetic(n=60, efac=4.0)
+    lat = maps.lattice(d, TRUE[3] + np.array([-0.03, 0.03]), TRUE[4] + np.array([-0.15, 0.15]), best=TRUE,
+                       workers=2, log=lambda *a: None)
+    logs, alphas = TRUE[3] + np.linspace(-0.02, 0.02, 3), TRUE[5] + np.linspace(-0.1, 0.1, 3)
+    r = maps.alpha_profile([lat], d, logs, alphas, best=TRUE, workers=2, log=lambda *a: None)
+    # spoil all points but the centre by vectors with the other sign of u0, far from any solution
+    bad = r["pars"].copy()
+    chi = r["chi2"].copy()
+    be = F.make_backend(C.GRID_BACKEND)
+    for i in range(3):
+        for j in range(3):
+            if (i, j) != (1, 1):
+                p = bad[i, j].copy()
+                p[1], p[5], p[0] = -p[1], p[5] + np.pi, p[0] + 2.0
+                bad[i, j] = p
+                chi[i, j] = M.chi2(be, p, D.bin_wings(d, TRUE[0], TRUE[2]))
+    out = maps.alpha_profile_refine(dict(r, chi2=chi, pars=bad), d, best=TRUE, workers=2, log=lambda *a: None)
+    assert np.all(out["chi2"] <= chi + 1e-9)
+    spoiled = np.ones((3, 3), bool)
+    spoiled[1, 1] = False
+    assert np.all(out["chi2"][spoiled] < chi[spoiled] - 10.0)            # recovered from the other u0 sign ...
+    assert np.all(out["chi2"] <= r["chi2"] + 5.0)                         # ... to about the original values

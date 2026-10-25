@@ -11,6 +11,12 @@ First public version.
   `refine()` (finer cells along the Delta chi2 band edges), `densify()` and `polish()` (finer lattices from known
   solutions), `alpha_minima()` (all local solutions in the trajectory angle).
 - Caustic-crossing starting points for fits (`cfg["caustic_crossings"]`).
+- Neighbour refinement passes check only points whose neighbourhood changed since their last check (identical results,
+  fewer checks).
+- `cfg["optimizer"] = "nm_lm"`: short Nelder–Mead then Levenberg–Marquardt (`optimize.least_squares_lm`, residual
+  vectors `model.chi2_residuals` also for binned data): 3–4× faster map refinement at the same quality.
+- `cfg["interp_start"]` for `densify`; `maps.alpha_profile_refine`; (log s, α) refinement now spreads solutions of
+  both signs of u0.
 - `khgrid`: the (k, h) search grid of Hall et al. (2024).
 - No SciPy dependency: Nelder–Mead copied from SciPy (`lenscape.optimize`, bit-identical results).
 - Annual parallax and linear orbital motion, MCMC (affine-invariant ensemble), source radius and Einstein radius.
