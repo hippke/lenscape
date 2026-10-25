@@ -681,7 +681,8 @@ def _outliers(chi, thr):
     """Points that stand out above their neighbours along s or along q by more than thr, by either of two rules:
     above the larger of the two adjacent values (isolated spikes and one-cell-wide stripes), or above the quadratic
     extrapolation of the surface through the two neighbours on either side (a stuck fit on a slope or next to other
-    stuck fits; one neighbour on a side: that value). Checked on MOA-2022-BLG-091 against later, better maps: of the
+    stuck fits; one neighbour on a side: that value), or, at an edge of the map, above the one-sided quadratic
+    extrapolation from the interior. Checked on MOA-2022-BLG-091 against later, better maps: of the
     points the quadratic rule adds, 57 % (50 x 49 map) and 93 % (8x map) were lowered by > 1 later; of the points
     only the adjacent rule finds, 52 % / none, so both are kept. Where no axis has neighbours on both sides (corners),
     the point must exceed all available extrapolations."""
@@ -698,6 +699,13 @@ def _outliers(chi, thr):
                 side.append(np.where(np.isfinite(n2), 2 * n1 - n2, n1))
             b = np.isfinite(adj[0]) & np.isfinite(adj[1])
             flag |= b & ((chi - np.fmax(adj[0], adj[1]) > thr) | (chi - np.fmax(side[0], side[1]) > thr))
+            # edge along this axis: above both the adjacent value and the one-sided quadratic extrapolation from
+            # the interior by more than thr (the extrapolation alone is pulled down by a spike two cells in); an edge
+            # point next to a much better neighbour had escaped both rules and stayed 16 above the map's value
+            one = np.isfinite(adj[0]) ^ np.isfinite(adj[1])
+            a1 = np.where(np.isfinite(adj[0]), adj[0], adj[1])
+            s1 = np.where(np.isfinite(side[0]), side[0], side[1])
+            flag |= one & (chi - np.fmax(s1, a1) > thr)
             both |= b
             preds += side
         allmax = np.nanmax(np.array(preds), axis=0)

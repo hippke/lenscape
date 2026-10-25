@@ -41,6 +41,8 @@ First public version.
 - `dchi2_cut` (5 × the last band edge) in `lattice`, `densify` and `polish`: points far above the displayed bands
   get one start and no refinement or outlier search unless a neighbour is below the cut; no change on maps that lie
   inside the bands, large savings on wide maps.
+- Outlier rule at the edges of a map: an edge point above both its adjacent value and the one-sided quadratic
+  extrapolation from the interior by more than the threshold is searched (one such point had stayed 16 above).
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.
