@@ -414,7 +414,7 @@ def _relax_point(ls, lq, own, nb_pars, cfg, margin, forced):
 
 
 def refine_queue(chi, pars, fn, make_args, workers=19, margin=1.0, log=print, desc="neighbour refinement",
-                 wrap_j=False, smooth=None, active=None, max_refits=30):
+                 wrap_j=False, smooth=None, active=None, max_refits=30, stats=None):
     """Asynchronous neighbour refinement of a map (chi, pars updated copies returned). Every point is a task
     (fn(*make_args(i, j, chi, pars, forced)) -> (chi2, x) or None); a point whose result improves it by more than
     `margin` (or that was unknown) makes its eight neighbours stale, and stale points are queued, the largest gap to
@@ -517,6 +517,8 @@ def refine_queue(chi, pars, fn, make_args, workers=19, margin=1.0, log=print, de
             dispatch()
     if bar is not None:
         bar.close()
+    if stats is not None:
+        stats.update(tasks=n_task, improved=n_imp, small=n_small)
     log(f"{desc}: {n_task} points checked, {n_imp} improved"
         + (f" ({n_small} by less than {margin:g})" if n_small else "")
         + (f"; WARNING: {n_capped} points reached max_refits={max_refits} (not converged)" if n_capped else ""))

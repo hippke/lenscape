@@ -33,10 +33,57 @@ def _relax_box(box, cfg, warm, cval, margin):
     return c, x
 
 
+def _relax_queue(cells, boxf, nx, cfg_relax, top, workers, log, margin, relax_nb, mirror, precheck, label):
+    """_relax through grid.refine_queue: one task per stale cell, improvements propagate as they arrive."""
+    ny = max(j for _, j in cells) + 1
+    chi = np.full((nx, ny), np.nan)
+    pars = np.full((nx, ny, 7), np.nan)
+    for (i, j), (c, x) in cells.items():
+        if x is not None and np.isfinite(c):
+            chi[i, j], pars[i, j] = c, x
+    state = {"cmin": float(np.nanmin(chi))}
+
+    def make_args(i, j, chi, pars, forced):
+        c = chi[i, j]
+        if not np.isfinite(c):
+            return None
+        state["cmin"] = min(state["cmin"], float(np.nanmin(chi[max(0, i - 1):i + 2, max(0, j - 1):j + 2])))
+        cand = []
+        for a in (-1, 0, 1):
+            for b in (-1, 0, 1):
+                if (a or b) and 0 <= i + a < nx and 0 <= j + b < ny and np.isfinite(chi[i + a, j + b]) \
+                        and chi[i + a, j + b] < c - margin and chi[i + a, j + b] - state["cmin"] < 2 * top:
+                    cand.append((chi[i + a, j + b], pars[i + a, j + b]))
+        km = nx - 1 - i
+        if mirror and np.isfinite(chi[km, j]) and chi[km, j] < c - margin:
+            y = pars[km, j].copy()
+            y[5] = -y[5]
+            cand.append((chi[km, j], y))
+        cand.sort(key=lambda v: v[0])
+        if relax_nb:
+            cand = cand[:relax_nb]
+        if not cand:
+            return None
+        w = [pars[i, j]] + [v[1] for v in cand]
+        return (boxf(i, j), cfg_relax, w, float(c), margin) if precheck else (boxf(i, j), cfg_relax, w)
+
+    st = {}
+    chi2, pars2 = G.refine_queue(chi, pars, _relax_box if precheck else _fit_box, make_args, workers, margin,
+                                 log, f"{label}neighbour refinement", stats=st)
+    for (i, j) in cells:
+        if np.isfinite(chi2[i, j]) and chi2[i, j] < cells[(i, j)][0]:
+            cells[(i, j)] = (float(chi2[i, j]), pars2[i, j].copy())
+    log(f"  {label}neighbour refinement: {st.get('tasks', 0)} cells checked, {st.get('improved', 0)} improved by > {margin}")
+    return st.get("tasks", 0), st.get("improved", 0)
+
+
 def _relax(cells, boxf, nx, cfg_relax, top, workers, log, margin=1.0, sweeps=6, relax_nb=None, mirror=False,
            precheck=True, label=""):
-    """Relaxation sweeps on one level: cells = {(i, j): (chi2, x)} (updated in place); nx = cells per row (for the
-    s <-> 1/s mirror). Returns the number of worker tasks and of full refits."""
+    """Relaxation of one level: cells = {(i, j): (chi2, x)} (updated in place); nx = cells per row (for the
+    s <-> 1/s mirror). cfg["relax_mode"] "queue" (default): grid.refine_queue, one task per stale cell;
+    "sweeps": the earlier Jacobi sweeps (at most `sweeps`). Returns the number of worker tasks and of full refits."""
+    if cfg_relax.get("relax_mode", "queue") != "sweeps":
+        return _relax_queue(cells, boxf, nx, cfg_relax, top, workers, log, margin, relax_nb, mirror, precheck, label)
     ntask = nref = 0
     for sweep in range(sweeps):
         cmin = min(v[0] for v in cells.values())
