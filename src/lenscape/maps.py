@@ -446,13 +446,16 @@ def _plot_alpha(p, u0_ref):
 
 
 def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=None, n_starts=3, margin=1.0,
-                  max_sweeps=30, bin_wings=True, log=print, changed_only=True):
+                  max_sweeps=30, bin_wings=True, log=print, changed_only=True, u0_ref=None):
     """Profile chi2 over (log s, alpha): at every grid point, chi2 minimised over all other parameters including
     log q, so the map has a value everywhere (unlike a projection of lattice solutions). alpha is in the convention
     of (log s, alpha) panels: solutions with the opposite sign of u0 to the best fit are counted at alpha + pi, and
     the fit at such a point keeps that sign (alpha - pi in the model). Starts: the n_starts nearest known solutions
     of `previous` (lattice / densify results, refine cells, alpha_minima rows); then neighbour refinement sweeps.
-    Returns dict(logs, alphas, chi2 (ns, na), pars (ns, na, 7) model vectors, chi2_ref, wall)."""
+    u0_ref: the sign of u0 counted at the plotted alpha; default: that of an alpha_profile result in `previous`,
+    else of the best known solution (pass it when `previous` holds solutions of both signs, e.g. a refined profile
+    converted to rows: its best point may be the mirror solution).
+    Returns dict(logs, alphas, chi2 (ns, na), pars (ns, na, 7) model vectors, chi2_ref, wall, u0_ref)."""
     workers = _workers(workers)
     cfg, fitdata = _prepare(data, cfg, best, bin_wings)
     logs, alphas = np.asarray(logs, float), np.asarray(alphas, float)
@@ -462,6 +465,11 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
             for row in r:
                 ls_, lq_, c, t0, u0, tE, al, lr = row
                 known.append((np.array([t0, u0, tE, ls_, lq_, al, lr]), c))
+        elif "alphas" in r:                                            # an alpha_profile result (7-vectors)
+            P, C = np.asarray(r["pars"], float).reshape(-1, 7), np.asarray(r["chi2"], float).ravel()
+            for p, c in zip(P, C):
+                if np.isfinite(c) and np.all(np.isfinite(p)):
+                    known.append((p, c))
         elif np.ndim(r["chi2"]) == 2:
             for i, ls_ in enumerate(r["logs"]):
                 for j, lq_ in enumerate(r["logq"]):
@@ -472,7 +480,9 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
             for x, c in zip(r["x"], r["chi2"]):
                 if np.isfinite(c) and np.all(np.isfinite(x)):
                     known.append((np.array([x[0], x[1], x[2], x[5], x[6], x[3], x[4]]), c))
-    u0_ref = min(known, key=lambda v: v[1])[0][1]
+    if u0_ref is None:
+        prof = [r for r in previous if isinstance(r, dict) and "alphas" in r]
+        u0_ref = _profile_u0_ref(prof[0]) if prof else min(known, key=lambda v: v[1])[0][1]
     K = np.array([(p[3], _plot_alpha(p, u0_ref)) for p, _ in known])
     ds, da = abs(logs[1] - logs[0]), abs(alphas[1] - alphas[0])
 
