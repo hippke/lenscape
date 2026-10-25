@@ -166,7 +166,21 @@ def _interp_start(known, dist, tie=0.05, max_dist=1.5):
     return co.to_x(Y.mean(0)), float(c.mean()), c
 
 
-def _prepare(data, cfg, best, bin_wings):
+def _check_models(known, best, n=6, cut=500.0):
+    """Models for the per-night binning check besides best: up to n known solutions (7-vectors) spread in chi2 over
+    those within `cut` of the lowest, so that nights the map's other solutions bend are kept unbinned too."""
+    rows = [(c, p) for p, c in known if np.isfinite(c) and np.all(np.isfinite(p))]
+    if not rows:
+        return []
+    rows.sort(key=lambda v: v[0])
+    rows = [r for r in rows if r[0] - rows[0][0] < cut]
+    idx = np.unique(np.linspace(0, len(rows) - 1, n).round().astype(int))
+    return [np.asarray(rows[k][1], float) for k in idx]
+
+
+def _prepare(data, cfg, best, bin_wings, models=()):
+    """cfg with a seed, and the data to fit: the wings binned per night when best is given (bin_wings), each
+    night checked against best and the extra `models` (7-vectors)."""
     cfg = dict(C.DEFAULT if cfg is None else cfg)
     if best is not None:
         best = np.asarray(best, float)
@@ -176,7 +190,11 @@ def _prepare(data, cfg, best, bin_wings):
         cfg["seed"] = cfg.get("seed") or F.seed_from_data(data)
     if bin_wings and best is not None:
         # runs that a linear model within a night misrepresents at the best fit (an anomaly beyond one tE) stay unbinned
-        fitdata = D.bin_wings(data, best[0], best[2], K=cfg.get("bin_K", 1.0), model=(F.make_backend(cfg["grid_backend"]), best),
+        be = F.make_backend(cfg["grid_backend"])
+        K = cfg.get("bin_K", 0.5)
+        if not len(models):                      # only the best fit to check against: bin no closer than one tE
+            K = max(K, 1.0)
+        fitdata = D.bin_wings(data, best[0], best[2], K=K, model=[(be, best)] + [(be, m) for m in models],
                               tol=cfg.get("bin_tol", 0.05))
     else:
         fitdata = data
@@ -292,9 +310,11 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
     dchi2_cut: as in lattice(), in units of BANDS[-1] = 100. Returns a dict like lattice() (without "cells")."""
     workers = _workers(workers)
     logs, logq = np.asarray(logs, float), np.asarray(logq, float)
-    cfg, fitdata = _prepare(data, cfg, best, bin_wings)
-    interp = bool(cfg.get("interp_start", True))
     known = _known_solutions(previous)
+    cfg, fitdata = _prepare(data, cfg, best, bin_wings,
+                            _check_models([(np.array([x[0], x[1], x[2], a, b, x[3], x[4]]), c) for a, b, c, x in known], best)
+                            if best is not None else ())
+    interp = bool(cfg.get("interp_start", True))
     ref0 = min(c for _, _, c, _ in known)
     band = lambda dc: int(np.searchsorted(np.asarray(BANDS, float), dc))
     cut = None if dchi2_cut is None else dchi2_cut * float(BANDS[-1])
@@ -350,7 +370,10 @@ def polish(result, data, previous=(), best=None, cfg=None, workers=None, max_swe
     lattice results, keep the better solution; then neighbour refinement (up to max_sweeps) and outlier
     recalculation. Returns a new result dict."""
     workers = _workers(workers)
-    cfg, fitdata = _prepare(data, cfg, best, bin_wings)
+    known = _known_solutions([result] + list(previous))
+    cfg, fitdata = _prepare(data, cfg, best, bin_wings,
+                            _check_models([(np.array([x[0], x[1], x[2], a, b, x[3], x[4]]), c) for a, b, c, x in known], best)
+                            if best is not None else ())
     logs, logq = result["logs"], result["logq"]
     chi, pars = result["chi2"].copy(), result["pars"].copy()
     n_old = 0

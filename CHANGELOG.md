@@ -43,8 +43,9 @@ First public version.
   inside the bands, large savings on wide maps.
 - Outlier rule at the edges of a map: an edge point above both its adjacent value and the one-sided quadratic
   extrapolation from the interior by more than the threshold is searched (one such point had stayed 16 above).
-- `cfg["bin_K"]`, `cfg["bin_tol"]`: the wing-binning window and the per-night check tolerance as settings
-  (`bin_K=0.5`: −10 % CPU on the test block, same bands; default 1.0).
+- `cfg["bin_K"]` (0.5), `cfg["bin_tol"]`: the wing-binning window and the per-night check tolerance as settings;
+  `densify`, `polish` and the profiles check each night against the best fit and six known solutions spread over
+  the map, `lattice()` from scratch uses max(bin_K, 1). −10 % CPU on the test block, same bands.
 - `maps.multilevel`: lattice on a coarse sub-lattice, then densify level by level (the route for fine maps; the
   coarse lattice must resolve the valleys).
 - `alpha_profile` stage 1: start deduplication (`profile_dedupe`, on: −9 % CPU, same quality) and a gated LM start

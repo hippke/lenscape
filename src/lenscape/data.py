@@ -93,11 +93,11 @@ class Binned:
     parameter vectors, 64 % of the points evaluated, chi2 1.27x). The original arrays (t, f, e, idx, w, ...) stay
     available for residuals and plots; model.chi2 uses t_eval and the statistics.
 
-    model = (backend, p): a model of the event (its best fit). Every run is checked against it: where the binned
-    chi2 of the run differs from its exact chi2 by more than `tol`, the run is kept at full cadence. Without this
-    check an anomaly farther than K tE from t0 (a planetary caustic crossed at tau > 1) is binned with a straight
-    line through the caustic feature. `n_unbinned` counts the runs kept this way, `max_bin_error` is the largest
-    remaining per-run error at p."""
+    model = (backend, p), or a list of such pairs: models of the event (its best fit, and e.g. solutions from other
+    parts of the map). Every run is checked against each: where the binned chi2 of the run differs from its exact
+    chi2 by more than `tol` for any of them, the run is kept at full cadence. Without this check an anomaly farther
+    than K tE from t0 (a planetary caustic crossed at tau > 1) is binned with a straight line through the caustic
+    feature. `n_unbinned` counts the runs kept this way, `max_bin_error` is the largest remaining per-run error."""
     binned = True
 
     def __init__(self, data, t0, tE, K=1.0, gap=0.3, model=None, tol=0.05):
@@ -115,12 +115,13 @@ class Binned:
                     groups.append(g)
         self.n_unbinned, self.max_bin_error = 0, 0.0
         if model is not None and groups:
-            err = self._errors(groups, model)
-            bad = np.abs(err) > tol
+            models = model if isinstance(model, list) else [model]
+            err = np.max(np.abs(np.array([self._errors(groups, m) for m in models])), axis=0)
+            bad = err > tol
             for g in [g for g, b in zip(groups, bad) if b]:
                 keep[g] = True
             self.n_unbinned = int(bad.sum())
-            self.max_bin_error = float(np.max(np.abs(err[~bad]))) if (~bad).any() else 0.0
+            self.max_bin_error = float(np.max(err[~bad])) if (~bad).any() else 0.0
             groups = [g for g, b in zip(groups, bad) if not b]
         B = np.array([self._stats(g, t, w, f, idx) for g in groups]).reshape(-1, 8)
         kp = np.where(keep)[0]
