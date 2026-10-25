@@ -194,8 +194,9 @@ def test_interp_start_is_the_mean_of_the_nearest():
     known = [(0.0, 0.0, 10.0, np.array([0.0, 0.1, 20.0, 6.2, -3.0])), (1.0, 0.0, 11.0, np.array([1.0, 0.1, 22.0, 0.1, -3.0])),
              (5.0, 5.0, 9.0, np.array([0.0, -0.1, 20.0, 1.0, -3.0]))]
     dist = (np.array([0, 1, 2]), np.array([1.0, 1.0, 7.0]))                    # nearest indices, distances
-    x = maps._interp_start(known, dist)
+    x, c_ref = maps._interp_start(known, dist)[:2]
     assert abs(x[0] - 0.5) < 1e-12 and abs(np.mod(x[3], 2 * np.pi) - np.mod(0.5 * (6.2 + 0.1 + 2 * np.pi), 2 * np.pi)) < 1e-9
+    assert c_ref == 10.5                                                             # mean chi2 of the two nearest
     assert maps._interp_start(known, (np.array([0, 1, 2]), np.array([3.0, 3.0, 7.0]))) is None     # too far
 
 
