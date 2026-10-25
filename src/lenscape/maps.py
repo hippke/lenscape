@@ -25,14 +25,34 @@ def _workers(n):
     return n or max(1, (os.cpu_count() or 2) - 1)
 
 
-def _point_from_starts(ls, lq, starts, cfg, lm_start=None):
-    """Lattice point (s, q fixed) from the given start vectors (t0, u0, tE, alpha, log rho, ...). lm_start: an
-    extra start close to the solution (interpolated from neighbouring known solutions), fitted by Levenberg-Marquardt
-    alone (~20 light curves)."""
+def _same_start(y, z):
+    """Two start vectors in the fit coordinates (t0, t_eff, ln tE, alpha, log t_*) that lie in the same basin for
+    any practical purpose: |dt0| < 0.01 tE, |d t_eff| < 2 % + 1e-4 tE, |d ln tE| < 0.02, |d alpha| < 0.02,
+    |d log t_*| < 0.05."""
+    tE = np.exp(0.5 * (y[2] + z[2]))
+    da = abs((y[3] - z[3] + np.pi) % (2 * np.pi) - np.pi)
+    return (abs(y[0] - z[0]) < 0.01 * tE and abs(y[1] - z[1]) < 0.02 * abs(y[1]) + 1e-4 * tE
+            and abs(y[2] - z[2]) < 0.02 and da < 0.02 and abs(y[4] - z[4]) < 0.05)
+
+
+def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf):
+    """Lattice point (s, q fixed) from the given start vectors (t0, u0, tE, alpha, log rho, ...).
+    lm_start: a start interpolated from the known solutions around the point, fitted by Levenberg-Marquardt alone
+    (~20 light curves); c_ref: the interpolation of those solutions' chi2. When the result lies within
+    cfg["lm_gate"] (default 1.0) of c_ref and beats every other start's own chi2, it is the answer (MOA-2022-BLG-091,
+    2x -> 4x: the interpolated start is a median 0.06 above the solution, the nearest known solution 44); otherwise
+    the starts are fitted, each a short Nelder-Mead and Levenberg-Marquardt (fit.local_fit), in the order of their
+    chi2 at the point, skipping a start that lies in the basin of one already fitted (cfg["dedupe"], default on: the
+    nearest known solutions of a converged coarse map are usually one and the same solution)."""
     be = F.make_backend(cfg["grid_backend"])
     co = F.Coords(cfg.get("coords", "teff"))
     fx = lambda y: M.chi2(be, F.full_p(co.to_x(y), ls, lq), G._DATA)
     best = (np.inf, None)
+    pre = []
+    for x0 in starts:
+        y = co.from_x(np.asarray(x0[:5], float))
+        pre.append((fx(y), y))
+    gate = cfg.get("lm_gate", 1.0)
     if lm_start is not None and co.kind == "teff":
         y = co.from_x(np.asarray(lm_start, float))
         fr = lambda y: M.chi2_residuals(be, np.asarray(F.full_p(co.to_x(y), ls, lq), float), G._DATA)
@@ -40,13 +60,18 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None):
         c = fx(q.x)
         if np.isfinite(c):
             best = (c, co.to_x(q.x))
-    for x0 in starts:
-        y = co.from_x(np.asarray(x0[:5], float))
-        c = fx(y)
+            if gate is not None and c < c_ref + gate and all(c < c0 for c0, _ in pre):
+                return best
+    done = []                                        # starts and results already explored (fit coordinates)
+    for c, y in sorted(pre, key=lambda v: v[0]):
+        if cfg.get("dedupe", True) and any(_same_start(y, z) for z in done):
+            continue
+        done.append(y.copy())
         if cfg.get("optimizer", "nm") != "nm":
             c1, y1 = F.local_fit(be, G._DATA, ls, lq, y, cfg, 0.3, 1000)
             if c1 < c:
                 c, y = c1, y1
+            done.append(np.asarray(y))
             if c < best[0]:
                 best = (c, co.to_x(y))
             continue
@@ -56,6 +81,7 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None):
                                                                  fatol=1e-2))
             if r.fun < c:
                 c, y = r.fun, r.x
+        done.append(np.asarray(y))
         if c < best[0]:
             best = (c, co.to_x(y))
     return best
@@ -102,8 +128,9 @@ def _grid_knn(Kx, Ky, xs, ys, m, period_y=None):
 
 
 def _interp_start(known, dist, tie=0.05, max_dist=1.5):
-    """dist: (indices, distances) of the nearest known solutions (from _grid_knn). Mean (in fit coordinates, alpha unwrapped) of the equally nearest known solutions: on a lattice refined by 2,
-    the bilinear interpolation at a cell centre (4 corners) or edge midpoint (2 ends), the point itself if known.
+    """dist: (indices, distances) of the nearest known solutions (from _grid_knn). Mean (in fit coordinates, alpha
+    unwrapped) of the equally nearest known solutions and the mean of their chi2: on a lattice refined by 2, the
+    bilinear interpolation at a cell centre (4 corners) or edge midpoint (2 ends), the point itself if known.
     None if they are farther than max_dist (new-lattice steps), differ in the sign of u0 or spread in alpha > 0.3."""
     idx, d = dist                                  # nearest known solutions and their distances, sorted
     k = idx[d <= d[0] + tie][:8]
@@ -117,7 +144,7 @@ def _interp_start(known, dist, tie=0.05, max_dist=1.5):
     Y[:, 3] = Y[0, 3] + (Y[:, 3] - Y[0, 3] + np.pi) % (2 * np.pi) - np.pi
     if np.ptp(Y[:, 3]) > 0.3:
         return None
-    return co.to_x(Y.mean(0))
+    return co.to_x(Y.mean(0)), float(np.mean([known[m][2] for m in k]))
 
 
 def _prepare(data, cfg, best, bin_wings):
@@ -239,7 +266,7 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
     workers = _workers(workers)
     logs, logq = np.asarray(logs, float), np.asarray(logq, float)
     cfg, fitdata = _prepare(data, cfg, best, bin_wings)
-    interp = bool(cfg.get("interp_start", False))
+    interp = bool(cfg.get("interp_start", True))
     known = _known_solutions(previous)
     K = np.array([(a, b) for a, b, _, _ in known])
     # distances in units of the new lattice step, so that s and q count alike
@@ -257,10 +284,10 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
             near = nn[:4 * n_starts]
             # the nearest known solution always (a point of an earlier lattice keeps its own solution as a start),
             # then the best chi2 among the close ones
-            ns_ = n_starts - 1 if interp else n_starts
-            near = [near[0]] + sorted(near[1:], key=lambda k: (dist[k] > 2.0, known[k][2]))[:ns_ - 1]
+            near = [near[0]] + sorted(near[1:], key=lambda k: (dist[k] > 2.0, known[k][2]))[:n_starts - 1]
+            ip = _interp_start(known, (nn, dn)) if interp else None
             tasks[(i, j)] = (float(ls), float(lq), [np.asarray(known[k][3], float) for k in near], cfg,
-                             _interp_start(known, (nn, dn)) if interp else None)
+                             ip[0] if ip else None, ip[1] if ip else np.inf)
     G.warmup(cfg, fitdata)
     res, _ = G.run_isolated(_point_from_starts, tasks, workers, log=log, desc="lattice point fits")
     chi = np.full((len(logs), len(logq)), np.nan)

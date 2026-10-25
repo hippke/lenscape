@@ -15,6 +15,10 @@ First public version.
   check (noise-level gains cascaded through the map until `max_sweeps`); the roughness test interpolates
   quadratically through two neighbours on either side, so the curvature of a coarse map no longer counts as
   roughness. Same for (log s, α) profiles.
+- Lattice-point fits (`lattice` stage 3, `densify`) skip starts in the basin of one already fitted (`dedupe`), and
+  `densify` first fits the interpolated start by Levenberg–Marquardt alone (`interp_start`, now on) and stops there
+  when the result is consistent with the surrounding known solutions (`lm_gate`): MOA-2022-BLG-091, 2× → 4× block,
+  5.8× less CPU in the point stage, same Δχ² bands.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.
