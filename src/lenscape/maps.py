@@ -35,7 +35,7 @@ def _same_start(y, z):
             and abs(y[2] - z[2]) < 0.02 and da < 0.02 and abs(y[4] - z[4]) < 0.05)
 
 
-def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=False):
+def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=False, c_cut=np.inf):
     """Lattice point (s, q fixed) from the given start vectors (t0, u0, tE, alpha, log rho, ...).
     lm_start: a start interpolated from the known solutions around the point; c_ref: the interpolation of those
     solutions' chi2; smooth: those solutions agree (same Delta chi2 band, spread < 0.1 dex). Steps, each taken only
@@ -48,7 +48,8 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=
          start is a median 0.06 above the solution, the nearest known solution 44);
       3. the starts, each a short Nelder-Mead and Levenberg-Marquardt (fit.local_fit), in the order of their chi2
          at the point, skipping a start in the basin of one already fitted (cfg["dedupe"], default on: the nearest
-         known solutions of a converged coarse map are usually one and the same solution)."""
+         known solutions of a converged coarse map are usually one and the same solution); only the best start
+         when every start's chi2 at the point lies above c_cut (the point is far above the displayed bands)."""
     be = F.make_backend(cfg["grid_backend"])
     co = F.Coords(cfg.get("coords", "teff"))
     fx = lambda y: M.chi2(be, F.full_p(co.to_x(y), ls, lq), G._DATA)
@@ -75,7 +76,10 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=
             if settled(c):
                 return best
     done = []                                        # starts and results already explored (fit coordinates)
-    for c, y in sorted(pre, key=lambda v: v[0]):
+    order = sorted(pre, key=lambda v: v[0])
+    if order and order[0][0] > c_cut:
+        order = order[:1]
+    for c, y in order:
         if cfg.get("dedupe", True) and any(_same_start(y, z) for z in done):
             continue
         done.append(y.copy())
@@ -179,12 +183,15 @@ def _prepare(data, cfg, best, bin_wings):
 
 
 def lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=BANDS, seed_grid=2, bin_wings=True,
-            max_sweeps=30, log=print):
+            max_sweeps=30, dchi2_cut=5.0, log=print):
     """Profile chi2 on the lattice logs x logq (1-D arrays, uniform steps).
     data: Data; best: best-fit vector (t0, u0, tE, log s, log q, alpha, log rho) of the event, used as the start of
     the fits and to bin the far wings (bin_wings); without it, a start is estimated from the data. bands: Delta chi2
     levels whose edges guide the cell refinement. max_sweeps: neighbour-refinement passes (as in densify; a map
-    stopped there is not converged and says so). Returns a dict: logs, logq, chi2 (ns, nq), pars (ns, nq, 5:
+    stopped there is not converged and says so). dchi2_cut: in units of the last band edge, points above
+    dchi2_cut * bands[-1] over the minimum get one start, no refinement and no outlier search unless a neighbour
+    is below (None: everything everywhere; makes no difference where the whole lattice is inside the bands, large
+    on wide maps). Returns a dict: logs, logq, chi2 (ns, nq), pars (ns, nq, 5:
     t0, u0, tE, alpha, log rho), chi2_ref (lowest chi2 found), cells (stage-1 cell fits), wall-clock times."""
     workers = _workers(workers)
     logs, logq = np.asarray(logs, float), np.asarray(logq, float)
@@ -202,13 +209,15 @@ def lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=BANDS, se
                         min_ds=np.inf, min_dq=np.inf, stage=ST, log=log)
     t1 = time.time()
     ST("Lattice point fits", "s and q fixed at each lattice point, started from the cell fits")
+    cut = None if dchi2_cut is None else dchi2_cut * float(bands[-1])
+    c_cut = np.inf if cut is None else float(np.min(B["chi2"])) + cut
     tasks = {}
     for i, ls in enumerate(logs):
         for j, lq in enumerate(logq):
             near = np.where((np.abs(B["logs"] - ls) <= 1.5 * dls) & (np.abs(B["logq"] - lq) <= 1.5 * dlq))[0]
             near = near[np.argsort(B["chi2"][near])][:3]
             starts = [B["x"][k].copy() for k in near if np.all(np.isfinite(B["x"][k][:5]))]
-            tasks[(i, j)] = (float(ls), float(lq), starts, cfg)
+            tasks[(i, j)] = (float(ls), float(lq), starts, cfg, None, np.inf, False, c_cut)
     G.warmup(cfg, fitdata)
     res, _ = G.run_isolated(_point_from_starts, tasks, workers, log=log, desc="lattice point fits")
     chi = np.full((len(logs), len(logq)), np.nan)
@@ -218,9 +227,11 @@ def lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=BANDS, se
             chi[i, j], pars[i, j] = v
     t2 = time.time()
     ST("Neighbour refinement", "refit points whose neighbours found a better solution")
-    chi2, pars2 = G.relax(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, max_sweeps=max_sweeps)
+    chi2, pars2 = G.relax(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, max_sweeps=max_sweeps,
+                          dchi2_cut=cut)
     ST("Recalculate outliers", "deep search for points that are worse than their neighbours")
-    chi2, pars2, _ = G.repair_outliers(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10)
+    chi2, pars2, _ = G.repair_outliers(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10,
+                                       dchi2_cut=cut)
     t3 = time.time()
     ref = float(min(np.nanmin(chi2), np.min(B["chi2"])))
     log(f"done in {t3 - t0:.0f}s; lowest chi2 {ref:.2f}")
@@ -271,12 +282,12 @@ def _known_solutions(previous):
 
 
 def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_starts=3, bin_wings=True, max_sweeps=30,
-            log=print):
+            dchi2_cut=5.0, log=print):
     """A (usually finer) lattice started from known solutions instead of from scratch: every new point is fitted
     (s, q fixed) from the n_starts nearest solutions of `previous` (a list of lattice(), refine() or densify()
     results), then neighbour refinement and outlier recalculation as in lattice(). No seed grid and no cell fits,
     so a 2x finer lattice costs about 4x the lattice-point stage of the original map rather than a new map.
-    Returns a dict like lattice() (without "cells")."""
+    dchi2_cut: as in lattice(), in units of BANDS[-1] = 100. Returns a dict like lattice() (without "cells")."""
     workers = _workers(workers)
     logs, logq = np.asarray(logs, float), np.asarray(logq, float)
     cfg, fitdata = _prepare(data, cfg, best, bin_wings)
@@ -284,6 +295,8 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
     known = _known_solutions(previous)
     ref0 = min(c for _, _, c, _ in known)
     band = lambda dc: int(np.searchsorted(np.asarray(BANDS, float), dc))
+    cut = None if dchi2_cut is None else dchi2_cut * float(BANDS[-1])
+    c_cut = np.inf if cut is None else ref0 + cut
     K = np.array([(a, b) for a, b, _, _ in known])
     # distances in units of the new lattice step, so that s and q count alike
     ds, dq = abs(logs[1] - logs[0]), abs(logq[1] - logq[0])
@@ -307,7 +320,7 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
                 dc = np.sort(ip[2]) - ref0
                 smooth = bool(band(dc[0]) == band(dc[-1]) and np.log10(dc[-1] + 1e-3) - np.log10(dc[0] + 1e-3) < 0.1)
             tasks[(i, j)] = (float(ls), float(lq), [np.asarray(known[k][3], float) for k in near], cfg,
-                             ip[0] if ip else None, ip[1] if ip else np.inf, smooth)
+                             ip[0] if ip else None, ip[1] if ip else np.inf, smooth, c_cut)
     G.warmup(cfg, fitdata)
     res, _ = G.run_isolated(_point_from_starts, tasks, workers, log=log, desc="lattice point fits")
     chi = np.full((len(logs), len(logq)), np.nan)
@@ -317,9 +330,11 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
             chi[i, j], pars[i, j] = v
     t1 = time.time()
     ST("Neighbour refinement", "refit points whose neighbours found a better solution")
-    chi2, pars2 = G.relax(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, max_sweeps=max_sweeps)
+    chi2, pars2 = G.relax(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, max_sweeps=max_sweeps,
+                          dchi2_cut=cut)
     ST("Recalculate outliers", "deep search for points that are worse than their neighbours")
-    chi2, pars2, _ = G.repair_outliers(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10)
+    chi2, pars2, _ = G.repair_outliers(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10,
+                                       dchi2_cut=cut)
     t2 = time.time()
     ref = float(min(np.nanmin(chi2), min(c for _, _, c, _ in known)))
     log(f"done in {t2 - t0:.0f}s; lowest chi2 {ref:.2f}")
@@ -327,7 +342,8 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
                 wall_points=t1 - t0, wall_refinement=t2 - t1)
 
 
-def polish(result, data, previous=(), best=None, cfg=None, workers=None, max_sweeps=30, bin_wings=True, log=print):
+def polish(result, data, previous=(), best=None, cfg=None, workers=None, max_sweeps=30, bin_wings=True, dchi2_cut=5.0,
+           log=print):
     """Improve a lattice result in place of recomputing it: at points that coincide with points of `previous`
     lattice results, keep the better solution; then neighbour refinement (up to max_sweeps) and outlier
     recalculation. Returns a new result dict."""
@@ -349,9 +365,12 @@ def polish(result, data, previous=(), best=None, cfg=None, workers=None, max_swe
     log(f"{n_old} points taken from earlier lattices")
     ST = G.Stages(2, log)
     ST("Neighbour refinement", "refit points whose neighbours found a better solution")
-    chi, pars = G.relax(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, max_sweeps=max_sweeps)
+    cut = None if dchi2_cut is None else dchi2_cut * float(BANDS[-1])
+    chi, pars = G.relax(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, max_sweeps=max_sweeps,
+                        dchi2_cut=cut)
     ST("Recalculate outliers", "deep search for points that are worse than their neighbours")
-    chi, pars, _ = G.repair_outliers(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10)
+    chi, pars, _ = G.repair_outliers(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10,
+                                     dchi2_cut=cut)
     return dict(result, chi2=chi, pars=pars, chi2_ref=float(min(result["chi2_ref"], np.nanmin(chi))))
 
 

@@ -38,6 +38,9 @@ First public version.
   lattice: refinement 180 → 105 CPU-s, 23 → 10 s wall. `cfg["relax_mode"]="sweeps"` keeps the earlier passes.
 - The cell-stage relaxation (`amr._relax`) runs on the queue engine as well: MOA-2022-BLG-091 16 × 16 lattice from
   scratch 237 → 148 s wall, same bands (its passes ran 1–17 refits behind a barrier at ~10–25 % CPU use).
+- `dchi2_cut` (5 × the last band edge) in `lattice`, `densify` and `polish`: points far above the displayed bands
+  get one start and no refinement or outlier search unless a neighbour is below the cut; no change on maps that lie
+  inside the bands, large savings on wide maps.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.

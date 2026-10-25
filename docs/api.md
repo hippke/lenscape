@@ -71,7 +71,7 @@ functions pass their `best` as the model (`bin_wings=True`).
 
 ## `lenscape.maps` — Δχ² maps
 
-### `lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=(4, 16, 36, 64, 100), seed_grid=2, bin_wings=True, max_sweeps=30, log=print)`
+### `lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=(4, 16, 36, 64, 100), seed_grid=2, bin_wings=True, max_sweeps=30, dchi2_cut=5.0, log=print)`
 Profile χ² at every point of the lattice `logs × logq` (1-D arrays with uniform steps): s and q fixed, the other
 parameters fitted. Runs in stages (cell fits from a coarse seed grid, lattice-point fits, neighbour refinement,
 outlier recalculation; see [method.md](method.md)), each with a numbered header and a progress bar.
@@ -80,6 +80,9 @@ outlier recalculation; see [method.md](method.md)), each with a numbered header 
 - `cfg`: settings dict (default `config.DEFAULT`).
 - `workers`: parallel processes (default: number of cores − 1).
 - `bands`: Δχ² levels; cells crossed by a band edge get extra attention.
+- `dchi2_cut`: in units of `bands[-1]`; points more than `dchi2_cut * bands[-1]` above the minimum get one start,
+  no neighbour refinement and no outlier search unless a neighbour is below the cut (`None`: everything everywhere).
+  No effect where the whole lattice lies inside the bands (MOA-2022-BLG-091); on wide maps most cells are above.
 
 Returns a dict:
 
@@ -99,13 +102,13 @@ size). Starts from `result = lattice(...)`. Each cell holds the best fit anywher
 cell). Returns the leaves as a dict of arrays: `logs`, `logq` (cell centres), `hs`, `hq` (half widths), `chi2`,
 `x` (best fit: t0, u0, tE, alpha, log rho, log s, log q), `level`, `chi2_ref`, `nfit`, `wall`.
 
-### `densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_starts=3, max_sweeps=30)`
+### `densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_starts=3, max_sweeps=30, dchi2_cut=5.0)`
 A (finer) lattice started from known solutions: every point is fitted from the nearest solutions of `previous`
 (a list of `lattice`, `refine` or `densify` results; the nearest one is always included), then neighbour refinement
 and outlier recalculation. No seed grid and no cell fits: a 2× finer map of a 50 × 49 lattice (9603 points) took
 27 minutes on a 16-core desktop CPU.
 
-### `polish(result, data, previous=(), best=None, cfg=None, workers=None, max_sweeps=30)`
+### `polish(result, data, previous=(), best=None, cfg=None, workers=None, max_sweeps=30, dchi2_cut=5.0)`
 Improves a result: at points shared with `previous` lattices it keeps the better solution, then runs neighbour
 refinement and outlier recalculation again.
 

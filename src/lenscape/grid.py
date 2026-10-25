@@ -705,12 +705,14 @@ def _outliers(chi, thr):
     return flag & fin
 
 
-def repair_outliers(chi, pars, logs, logq, cfg, workers=19, thr=8.0, passes=3, log=print, data=None, min_gain=1.0):
+def repair_outliers(chi, pars, logs, logq, cfg, workers=19, thr=8.0, passes=3, log=print, data=None, min_gain=1.0,
+                    dchi2_cut=None):
     """Stuck fits: points above their neighbours along s or along q by more than thr (see _outliers; e.g. MOA-2022-BLG-091: 60.4 -> 6.9 and 54.2 -> 28.2, matching their neighbours, while the
     neighbour relaxation had missed them) get a deep search (fit_point_heavy) with the neighbours' and the point's
     own solutions as extra starts. Any improvement is kept, but only an improvement by more than min_gain counts as
     a repair: a point whose search gained less is a feature of the profile and is not searched again unless a
     neighbour (or the point itself) changed by more than min_gain since; passes run until no such point is left.
+    dchi2_cut: only points within dchi2_cut of the map's minimum, and their neighbours, are searched.
     Returns chi, pars, n_fixed (points improved by more than min_gain)."""
     global _DATA
     if data is not None:
@@ -721,6 +723,8 @@ def repair_outliers(chi, pars, logs, logq, cfg, workers=19, thr=8.0, passes=3, l
     ni, nj = chi.shape
     for npass in range(passes):
         cand = _outliers(chi, thr) & stale
+        if dchi2_cut is not None:
+            cand &= _near((chi - np.nanmin(chi)) < dchi2_cut)
         tasks = {}
         for i, j in zip(*np.nonzero(cand)):
             nb = [(i + a, j + b) for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)) if 0 <= i + a < ni and 0 <= j + b < nj]
