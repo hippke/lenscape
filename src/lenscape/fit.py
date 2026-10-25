@@ -361,11 +361,29 @@ def fit_point_box(box, data, cfg, warm=None):
     trials.sort(key=lambda z: z[0])
     best = trials[0]
     # refinement by Nelder-Mead also with optimizer="nm_lm": Levenberg-Marquardt in the sigmoid coordinates of s, q
-    # was worse (MOA-2022-BLG-091, 30 cells: 13 worse by > 1 than Nelder-Mead)
+    # was worse (MOA-2022-BLG-091, 30 cells: 13 worse by > 1 than Nelder-Mead). cfg["box_lm"] (experimental):
+    # short Nelder-Mead, then LM in (y, log s, log q) with s, q clipped to the cell
+    lm_best = (np.inf, None)
     for _, y in trials[:2]:
+        if cfg.get("box_lm") and co.kind == "teff":
+            r = nm(y, cfg.get("explore_nfev", 100), cfg.get("refine_step", 0.3))
+            z0 = np.r_[r.x[:5], to_s(r.x[5]), to_q(r.x[6])]
+            clip = lambda z: (min(max(z[5], s_lo), s_hi), min(max(z[6], q_lo), q_hi))
+            fr = lambda z: model.chi2_residuals(be, np.asarray(full_p(co.to_x(z[:5]), *clip(z)), float), data)
+            qz = least_squares_lm(fr, z0, np.r_[LM_STEP, 1e-5, 1e-4], np.r_[LM_CAP, 0.25 * (s_hi - s_lo),
+                                                                                0.25 * (q_hi - q_lo)])
+            sc, qc = clip(qz.x)
+            c = model.chi2(be, full_p(co.to_x(qz.x[:5]), sc, qc), data)
+            if c < min(r.fun, best[0], lm_best[0]):
+                lm_best = (c, np.r_[co.to_x(qz.x[:5]), sc, qc])
+            if r.fun < best[0]:
+                best = (r.fun, r.x)
+            continue
         r = nm(y, cfg.get("n_refine", 1500), cfg.get("refine_step", 0.3))
         if r.fun < best[0]:
             best = (r.fun, r.x)
+    if lm_best[0] < best[0]:
+        return lm_best
     y = best[1]
     return best[0], np.r_[co.to_x(y[:5]), to_s(y[5]), to_q(y[6])]
 

@@ -298,3 +298,14 @@ def test_offset_partner_is_its_own_inverse():
         assert abs(q[3] - p[3]) > 0.01 and np.allclose(F.offset_partner(q), p, atol=1e-9)
     # KMT-2024-BLG-1209 (Han et al. 2025): inner solution log s 0.0256 -> outer 0.0126 below 0, predicted -0.0134
     assert abs(F.offset_partner([0, -0.0247, 72.5, 0.0256, -2.48, 4.59, -3.1])[3] + 0.0134) < 5e-4
+
+
+def test_box_fit_with_lm_refinement():
+    """fit_point_box with cfg box_lm (LM in log s, log q clipped to the cell): finds the truth inside its cell."""
+    d = synthetic(n=60, efac=4.0)
+    cfg = dict(C.DEFAULT, seed=dict(t0=0.0, u0=0.08, tE=25.0, logrho=-2.8), box_lm=True)
+    box = (TRUE[3] - 0.01, TRUE[3] + 0.01, TRUE[4] - 0.05, TRUE[4] + 0.05)
+    c, x = F.fit_point_box(box, d, cfg)
+    be = F.make_backend(C.GRID_BACKEND)
+    assert c <= M.chi2(be, TRUE, d) + 1.0
+    assert box[0] <= x[5] <= box[1] and box[2] <= x[6] <= box[3]

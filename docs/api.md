@@ -214,6 +214,7 @@ Speed options of the maps (off by default):
 | key | effect |
 |---|---|
 | `optimizer="nm_lm"` | local fits as a short Nelder–Mead exploration (`explore_nfev`, default 100 evaluations) followed by Levenberg–Marquardt on the residual vector (`optimize.least_squares_lm`), instead of Nelder–Mead alone. Used by the lattice-point fits, neighbour refinement, `densify`, `polish`, `alpha_profile` and the refinement step of `alpha_minima` and `fit_point`; cell fits stay Nelder–Mead. MOA-2022-BLG-091: densified block 3.1× less CPU (99.8 % of points in the same Δχ² band as Nelder–Mead), (log s, α) profile 4.0× |
+| `box_lm=True` | experimental: cell fits (`fit_point_box`) refined by a short Nelder–Mead and Levenberg–Marquardt in (log s, log q) clipped to the cell instead of Nelder–Mead (30 cells of MOA-2022-BLG-091: same quality, ~1.3× less CPU) |
 | `interp_start=True` | `densify`: one extra start interpolated from the equally nearest known solutions (the bilinear interpolation on a lattice refined by 2), fitted by Levenberg–Marquardt alone (~20 light curves); the number of nearest-solution starts drops from `n_starts` to `n_starts − 1` |
 
 ---
