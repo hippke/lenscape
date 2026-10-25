@@ -19,6 +19,8 @@ First public version.
   `densify` first fits the interpolated start by Levenberg–Marquardt alone (`interp_start`, now on) and stops there
   when the result is consistent with the surrounding known solutions (`lm_gate`): MOA-2022-BLG-091, 2× → 4× block,
   5.8× less CPU in the point stage, same Δχ² bands.
+- `cfg["lm_tol"]` (0.03) and `cfg["nm_fatol"]` (1e-2): stopping rules of the local fits; LM no longer iterates to
+  gains of 1e-3, far below the χ² noise (8 % fewer light curves in the point stage, same bands).
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.

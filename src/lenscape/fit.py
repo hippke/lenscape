@@ -215,16 +215,16 @@ LM_STEP = np.array([1e-4, 1e-5, 1e-4, 1e-4, 1e-3])
 LM_CAP = np.array([0.3, 0.05, 0.1, 0.05, 0.2])
 
 
-def nm_then_lm(f, fr, y0, sim, n_explore, h=LM_STEP, cap=LM_CAP):
+def nm_then_lm(f, fr, y0, sim, n_explore, h=LM_STEP, cap=LM_CAP, lm_tol=1e-3, fatol=1e-2):
     """A short Nelder-Mead exploration from y0 (initial simplex sim, or the default simplex if None; n_explore
-    evaluations) to reach the right valley, then Levenberg-Marquardt on the residual vector fr to converge (from
-    distant starts LM alone stops in a nearer minimum). f: chi2; fr: residuals with sum of squares = chi2 + const.
-    Returns (chi2, y)."""
-    opts = dict(maxfev=n_explore, adaptive=True, fatol=1e-2)
+    evaluations, stopping at fatol) to reach the right valley, then Levenberg-Marquardt on the residual vector fr
+    to converge (from distant starts LM alone stops in a nearer minimum; it stops when a step gains less than
+    lm_tol). f: chi2; fr: residuals with sum of squares = chi2 + const. Returns (chi2, y)."""
+    opts = dict(maxfev=n_explore, adaptive=True, fatol=fatol)
     if sim is not None:
         opts["initial_simplex"] = sim
     r = minimize(f, y0, method="Nelder-Mead", options=opts)
-    q = least_squares_lm(fr, r.x, h, cap)
+    q = least_squares_lm(fr, r.x, h, cap, tol=lm_tol)
     if q.fun < r.fun or not np.isfinite(r.fun):
         c = f(q.x)                      # chi2 itself (binned data: the residuals' sum of squares omits a constant)
         if c < r.fun:
@@ -242,12 +242,14 @@ def local_fit(be, data, ls, lq, y0, cfg, step, maxfev):
     co = Coords(cfg.get("coords", "teff"))
     f = lambda y: model.chi2(be, full_p(co.to_x(y), ls, lq), data)
     f.coords = co
+    fatol = cfg.get("nm_fatol", 1e-2)
     if cfg.get("optimizer", "nm") == "nm" or co.kind != "teff":
-        r = _nm(f, y0, maxfev, step, 1e-2)
+        r = _nm(f, y0, maxfev, step, fatol)
         return r.fun, r.x
     fr = lambda y: model.chi2_residuals(be, np.asarray(full_p(co.to_x(y), ls, lq), float), data)
     sim = None if step is None else np.vstack([y0] + [y0 + np.eye(5)[k] * st for k, st in enumerate(co.steps(y0, step))])
-    return nm_then_lm(f, fr, y0, sim, min(maxfev, cfg.get("explore_nfev", 100)))
+    return nm_then_lm(f, fr, y0, sim, min(maxfev, cfg.get("explore_nfev", 100)), lm_tol=cfg.get("lm_tol", 1e-3),
+                      fatol=fatol)
 
 
 def fit_point_screen_d(ls, lq, data, cfg, warm=None):
@@ -276,7 +278,8 @@ def fit_point_screen_d(ls, lq, data, cfg, warm=None):
         rs = cfg.get("refine_step", None if sc is None else 0.3 * sc)
         if lm:                                          # refinement by nm_then_lm (see local_fit)
             sim = None if rs is None else np.vstack([y] + [y + np.eye(5)[k] * st for k, st in enumerate(co.steps(y, rs))])
-            c, yr = nm_then_lm(f, fr, y, sim, cfg.get("explore_nfev", 100))
+            c, yr = nm_then_lm(f, fr, y, sim, cfg.get("explore_nfev", 100), lm_tol=cfg.get("lm_tol", 1e-3),
+                               fatol=cfg.get("nm_fatol", 1e-2))
         else:
             r = _nm(f, y, cfg.get("n_refine", 1500), rs, 1e-2)
             c, yr = r.fun, r.x

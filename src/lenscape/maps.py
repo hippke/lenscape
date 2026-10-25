@@ -56,7 +56,7 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf):
     if lm_start is not None and co.kind == "teff":
         y = co.from_x(np.asarray(lm_start, float))
         fr = lambda y: M.chi2_residuals(be, np.asarray(F.full_p(co.to_x(y), ls, lq), float), G._DATA)
-        q = least_squares_lm(fr, y, F.LM_STEP, F.LM_CAP)
+        q = least_squares_lm(fr, y, F.LM_STEP, F.LM_CAP, tol=cfg.get("lm_tol", 1e-3))
         c = fx(q.x)
         if np.isfinite(c):
             best = (c, co.to_x(q.x))
@@ -435,7 +435,8 @@ def _sa_fit_one(be, ls, al, y, cfg):
         fr = lambda y: M.chi2_residuals(be, _sa_vector(y, ls, al), G._DATA)
         st = np.array([0.05, 0.1 * abs(y[1]) + 1e-3, 0.1, 0.1, 0.1]) * 0.3
         sim = np.vstack([y] + [y + np.eye(5)[k] * st[k] for k in range(5)])
-        c, y1 = F.nm_then_lm(f, fr, y, sim, cfg.get("explore_nfev", 100), SA_LM_STEP, SA_LM_CAP)
+        c, y1 = F.nm_then_lm(f, fr, y, sim, cfg.get("explore_nfev", 100), SA_LM_STEP, SA_LM_CAP,
+                             cfg.get("lm_tol", 1e-3), cfg.get("nm_fatol", 1e-2))
         c0 = f(y)
         return (c0, y) if c0 < c else (c, y1)
     c = f(y)
