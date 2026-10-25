@@ -58,6 +58,21 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=
     for x0 in starts:
         y = co.from_x(np.asarray(x0[:5], float))
         pre.append((fx(y), y))
+    if cfg.get("rho_starts") and co.kind == "teff":
+        # source-size screen: each start with log rho set to these values (one chi2 each); a variant that beats its
+        # start becomes an extra start. Separate small- and large-source local minima exist (MOA-2022-BLG-091: in its
+        # wide-side arm log rho -4 ... -5 is 8-15 better than the best fit's -2.9 at otherwise equal parameters), and
+        # neither the angle screen nor the neighbour refinement moves a whole region from one to the other
+        for c0, y in list(pre):
+            ltE = np.log10(np.exp(y[2]))                      # y[4] = log t_* = log rho + log tE
+            vs = [np.r_[y[:4], lr + ltE] for lr in cfg["rho_starts"]]
+            cv = [fx(v) for v in vs]
+            if cfg.get("rho_fit"):                            # fit every variant (the small source wins only
+                pre += list(zip(cv, vs))                      # after the other parameters adjust to it)
+                continue
+            k = int(np.argmin(cv))
+            if cv[k] < c0:
+                pre.append((cv[k], vs[k]))
     gate = cfg.get("lm_gate", 1.0)
     settled = lambda c: gate is not None and c < c_ref + gate and all(c < c0 for c0, _ in pre)
     if lm_start is not None and co.kind == "teff":

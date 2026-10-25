@@ -477,3 +477,15 @@ def test_analytic_lm_jacobian_matches_fd_and_converges():
     q_fd = least_squares_lm(fr, y, F.LM_STEP, F.LM_CAP, tol=0.03)
     q_an = least_squares_lm(fr, y, F.LM_STEP, F.LM_CAP, tol=0.03, jac=jac)
     assert abs(f(q_an.x) - f(q_fd.x)) < 1.0 and q_an.nfev < q_fd.nfev
+
+
+def test_rho_starts_find_the_other_source_size():
+    """_point_from_starts with cfg rho_starts: a start at a far too large source (log rho -1.3 instead of -2.8) gets
+    an extra start at the true source size, and the fit reaches the truth."""
+    from lenscape import grid as G
+    d = synthetic(n=60, efac=2.0)
+    G._DATA = d
+    be = F.make_backend(C.GRID_BACKEND)
+    start = np.r_[TRUE[:3], TRUE[5], -1.3]
+    c_on, _ = maps._point_from_starts(TRUE[3], TRUE[4], [start], dict(C.DEFAULT, rho_starts=(-2.5, -3.0, -3.5)))
+    assert c_on <= M.chi2(be, TRUE, d) + 1.0

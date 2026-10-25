@@ -80,6 +80,7 @@ First public version.
   solutions; removes the speckle of stuck fits in maps. (log s, α) maps wrap α only if the grid covers 2π.
 - (log s, α) profiles: `one_sign` option (each solution once, as in published maps). Start assignment in
   `alpha_profile` / `densify` by a bucketed nearest-neighbour search (seconds instead of a full sort per point).
+- `cfg["rho_starts"]`, `cfg["rho_fit"]`: extra source-size starts for lattice-point fits.
 - `fit.offset_partner` / `fit.fit_partner`: start for the offset-degenerate partner of a solution.
 - `cfg["interp_start"]` for `densify`; `maps.alpha_profile_refine`; (log s, α) refinement now spreads solutions of
   both signs of u0.
