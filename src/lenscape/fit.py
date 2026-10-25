@@ -235,9 +235,9 @@ def nm_then_lm(f, fr, y0, sim, n_explore, h=LM_STEP, cap=LM_CAP):
 def local_fit(be, data, ls, lq, y0, cfg, step, maxfev):
     """Local fit at fixed (s, q) from y0 (optimiser coordinates). cfg["optimizer"]:
     "nm" (default): Nelder-Mead, maxfev evaluations, initial simplex scaled by step.
-    "nm_lm": nm_then_lm with cfg["explore_nfev"] (default 100) Nelder-Mead evaluations; 2-3x fewer light curves than
-    Nelder-Mead at the same quality (MOA-2022-BLG-091: densified block 3.1x less CPU, 99.8 % of points in the same
-    Delta chi2 band). Only for the "teff" coordinates.
+    "nm_lm": nm_then_lm with min(maxfev, cfg["explore_nfev"]) (default 100) Nelder-Mead evaluations, then
+    Levenberg-Marquardt; 2-3x fewer light curves than Nelder-Mead at the same quality (MOA-2022-BLG-091: densified
+    block 3.1x less CPU, 99.8 % of points in the same Delta chi2 band). Only for the "teff" coordinates.
     Returns (chi2, y)."""
     co = Coords(cfg.get("coords", "teff"))
     f = lambda y: model.chi2(be, full_p(co.to_x(y), ls, lq), data)
@@ -247,7 +247,7 @@ def local_fit(be, data, ls, lq, y0, cfg, step, maxfev):
         return r.fun, r.x
     fr = lambda y: model.chi2_residuals(be, np.asarray(full_p(co.to_x(y), ls, lq), float), data)
     sim = None if step is None else np.vstack([y0] + [y0 + np.eye(5)[k] * st for k, st in enumerate(co.steps(y0, step))])
-    return nm_then_lm(f, fr, y0, sim, cfg.get("explore_nfev", 100))
+    return nm_then_lm(f, fr, y0, sim, min(maxfev, cfg.get("explore_nfev", 100)))
 
 
 def fit_point_screen_d(ls, lq, data, cfg, warm=None):
