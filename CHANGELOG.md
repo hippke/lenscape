@@ -47,8 +47,8 @@ First public version.
   (`bin_K=0.5`: −10 % CPU on the test block, same bands; default 1.0).
 - `maps.multilevel`: lattice on a coarse sub-lattice, then densify level by level (the route for fine maps; the
   coarse lattice must resolve the valleys).
-- `alpha_profile` stage 1 options `profile_interp` and `profile_dedupe` (gated LM start and start deduplication as
-  in `densify`): 1.4× less CPU on a profile densified from a coarser one, with ~8 % more points worse by > 1, so off.
+- `alpha_profile` stage 1: start deduplication (`profile_dedupe`, on: −9 % CPU, same quality) and a gated LM start
+  from the interpolated solutions (`profile_interp`, off: it settles points too early at fixed α).
 - `cfg["lm_jac"]="analytic"` (option): analytic point-source gradient for the Levenberg–Marquardt Jacobian
   (`nbmag._point_grad`, `contour.lc_full_grad`, `model.residual_jacobian`, `fit.lm_jacobian`); fewer evaluations
   per fit, but slower on caustic-crossing data where the finite-source points dominate, so the default stays
