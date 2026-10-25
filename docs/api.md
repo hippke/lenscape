@@ -214,7 +214,7 @@ Methods `to_x(y)`, `from_x(x)`, `steps(y, scale)`.
 `DEFAULT` (settings of fits and maps), `GRID_BACKEND`, `REFINE_BACKEND`. Copy and modify:
 `cfg = dict(lenscape.config.DEFAULT, n_screen=6, seed=dict(t0=..., u0=..., tE=..., logrho=...))`.
 
-Speed options of the maps (off by default):
+Options of the maps. `optimizer="nm_lm"` and `smooth=0.2` are the defaults; set `optimizer="nm"`, `smooth=None` for the earlier behaviour (Nelder–Mead only, no refits of rough points); `box_lm` and `interp_start` are off. (log s, α) profile fits use `profile_optimizer` (default `"nm"`: `nm_lm` was 4× faster there but worse from distant starts):
 
 | key | effect |
 |---|---|

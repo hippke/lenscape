@@ -19,6 +19,9 @@ DEFAULT = dict(
     grid_backend=GRID_BACKEND,
     refine_backend=REFINE_BACKEND,
     seed=None,                     # start vector dict(t0, u0, tE, logrho); fit.seed_from_data(data) estimates one
+    optimizer="nm_lm",             # local fits: short Nelder-Mead, then Levenberg-Marquardt ("nm": Nelder-Mead only)
+    smooth=0.2,                    # refinement also refits points > 0.2 above the interpolation of their neighbours
+    profile_optimizer="nm",        # (log s, alpha) profile fits: Nelder-Mead ("nm_lm" is faster but weaker there)
 )
 
 # backwards-compatible name

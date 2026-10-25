@@ -253,7 +253,7 @@ def test_alpha_profile_changed_only_is_identical():
 def test_alpha_maps_with_nm_lm():
     """alpha_profile and alpha_minima with optimizer="nm_lm": minimum at the truth, as with Nelder-Mead."""
     d = synthetic(n=60, efac=4.0)
-    cfg = dict(C.DEFAULT, optimizer="nm_lm")
+    cfg = dict(C.DEFAULT, optimizer="nm_lm", profile_optimizer="nm_lm")
     lat = maps.lattice(d, TRUE[3] + np.array([-0.03, 0.03]), TRUE[4] + np.array([-0.15, 0.15]), best=TRUE,
                        workers=2, log=lambda *a: None)
     alphas = TRUE[5] + np.array([-0.1, 0.0, 0.1])

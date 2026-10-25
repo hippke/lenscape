@@ -389,7 +389,9 @@ def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0):
 def _sa_fit_one(be, ls, al, y, cfg):
     """One start y (coordinates of _sa_coords) at fixed (log s, model alpha al): (chi2, y)."""
     f = lambda y: M.chi2(be, _sa_vector(y, ls, al), G._DATA)
-    if cfg.get("optimizer", "nm") != "nm":
+    # Nelder-Mead by default: nm_lm was worse here from distant starts (MOA-2022-BLG-091 profile block: 10 % of the
+    # points with Delta chi2 < 4 worse by > 1; test with spoiled other-sign starts), opt in with profile_optimizer
+    if cfg.get("profile_optimizer", "nm") != "nm":
         fr = lambda y: M.chi2_residuals(be, _sa_vector(y, ls, al), G._DATA)
         st = np.array([0.05, 0.1 * abs(y[1]) + 1e-3, 0.1, 0.1, 0.1]) * 0.3
         sim = np.vstack([y] + [y + np.eye(5)[k] * st[k] for k in range(5)])

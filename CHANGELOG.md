@@ -15,6 +15,9 @@ First public version.
   fewer checks).
 - `cfg["optimizer"] = "nm_lm"`: short Nelder–Mead then Levenberg–Marquardt (`optimize.least_squares_lm`, residual
   vectors `model.chi2_residuals` also for binned data): 3–4× faster map refinement at the same quality.
+- Defaults: `optimizer="nm_lm"` and `smooth=0.2` (faster fits; maps without the speckle of stuck fits). Earlier
+  behaviour with `optimizer="nm"`, `smooth=None`.
+  (log s, α) profile fits stay Nelder–Mead by default (`profile_optimizer`).
 - `cfg["smooth"]`: refinement of rough points (χ² above the interpolation of their neighbours) from all neighbours'
   solutions; removes the speckle of stuck fits in maps. (log s, α) maps wrap α only if the grid covers 2π.
 - (log s, α) profiles: `one_sign` option (each solution once, as in published maps). Start assignment in
