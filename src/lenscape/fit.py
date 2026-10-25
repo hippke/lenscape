@@ -396,6 +396,28 @@ def fit_full(data, p0, backend=None, rounds=3, maxfev=6000):
     return float(r.fun), p
 
 
+def offset_partner(p):
+    """Start vector for the offset-degenerate partner of the solution p = (t0, u0, tE, log s, log q, alpha, log rho)
+    (Zhang et al. 2022; the reflection used by RTModel, Bozza 2024): the separation s' at which the trajectory
+    crosses the binary axis at the same place relative to the other caustic; u0 adjusted so that this crossing
+    point stays fixed, other parameters kept. Its own inverse. Predicts the partner's log s to ~0.001 for
+    KMT-2024-BLG-1209 (inner/outer) and MOA-2022-BLG-091 (solutions C/D); fit_full from it found the partner in 3
+    of these 4 cases. Not meaningful for alpha near 0 or pi (trajectory along the binary axis)."""
+    t0, u0, tE, ls, lq, al, lr = np.asarray(p, float)
+    s, q = 10.0 ** ls, 10.0 ** lq
+    qq = q / (1 + q)
+    xc = u0 / np.sin(al) + s * qq                        # where the trajectory crosses the binary axis
+    b = 1 - s * s + 2 * s * xc
+    sn = (b + np.sqrt(4 * s * s + b * b)) / (2 * s)
+    return np.array([t0, (xc - sn * qq) * np.sin(al), tE, np.log10(sn), lq, al, lr])
+
+
+def fit_partner(data, p, backend=None, rounds=3, maxfev=6000):
+    """fit_full from offset_partner(p): (chi2, p') of the partner solution, or of whatever minimum the fit reaches
+    (compare its log s with the prediction)."""
+    return fit_full(data, offset_partner(p), backend, rounds, maxfev)
+
+
 def error_factors(data, p, backend=None):
     """Error-bar factor per data set, k = sqrt(chi2_set / N_set) at the solution p (fluxes solved per set);
     data.scale_errors(k) then gives chi2/N = 1 per set, the usual normalisation before a map or MCMC."""

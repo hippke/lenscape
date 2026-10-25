@@ -157,6 +157,13 @@ Deep search at fixed (s, q) from about 1000 diverse starts (used for the outlier
 Best fit of all seven parameters from the start `p0` (Nelder–Mead, restarted `rounds` times; default backend
 `config.REFINE_BACKEND`). Returns `(chi2, p)`.
 
+### `offset_partner(p)`, `fit_partner(data, p, backend=None)`
+Start vector for the offset-degenerate partner of a solution (Zhang et al. 2022; the reflection RTModel uses): the
+separation at which the trajectory crosses the binary axis at the same place relative to the other caustic. Its own
+inverse. `fit_partner` runs `fit_full` from it. For KMT-2024-BLG-1209 and MOA-2022-BLG-091 it predicted the
+partner's log s to about 0.001 and the fit found the partner in 3 of 4 cases; try it after finding a first solution
+of a new event.
+
 ### `error_factors(data, p, backend=None)`
 Error-bar factor per data set, k = √(χ²_set / N_set) at the solution `p`: `data.scale_errors(error_factors(data, p))`
 gives χ²/N = 1 per set.

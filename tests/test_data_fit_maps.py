@@ -289,3 +289,12 @@ def test_alpha_profile_refine_spreads_the_other_u0_sign():
     spoiled[1, 1] = False
     assert np.all(out["chi2"][spoiled] < chi[spoiled] - 10.0)            # recovered from the other u0 sign ...
     assert np.all(out["chi2"] <= r["chi2"] + 5.0)                         # ... to about the original values
+
+
+def test_offset_partner_is_its_own_inverse():
+    for p in ([0, -0.0247, 72.5, 0.0256, -2.48, 4.59, -3.1], TRUE, [0, -0.02, 30, -0.1, -3, 4.5, -3]):
+        p = np.asarray(p, float)
+        q = F.offset_partner(p)
+        assert abs(q[3] - p[3]) > 0.01 and np.allclose(F.offset_partner(q), p, atol=1e-9)
+    # KMT-2024-BLG-1209 (Han et al. 2025): inner solution log s 0.0256 -> outer 0.0126 below 0, predicted -0.0134
+    assert abs(F.offset_partner([0, -0.0247, 72.5, 0.0256, -2.48, 4.59, -3.1])[3] + 0.0134) < 5e-4
