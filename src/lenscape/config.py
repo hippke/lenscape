@@ -29,6 +29,7 @@ DEFAULT = dict(
     bin_K=0.5,                     # maps: nights beyond bin_K tE from t0 are binned (1.0 when only the best fit can be checked)
     bin_tol=0.05,                  # ... unless their binned chi2 differs from the exact one by > this for any checked model
     smooth=0.2,                    # refinement also refits points > 0.2 above the interpolation of their neighbours
+    n_explore_box=150,             # cell fits: Nelder-Mead evaluations per start before the refinement (300 cost more, 100 lost a point)
     n_screen_seeded=0,             # cell fits with warm starts (seeded cells, children): no angle screen of their own
     box_lm=True,                   # cell fits refined by short Nelder-Mead + Levenberg-Marquardt in (log s, log q)
     refine_gap=None,               # refine the second-best explored trial only within this gap of the best (None: always)
