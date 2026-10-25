@@ -175,9 +175,11 @@ Returns `(chi2, x)` with the 7-vector `x = (t0, u0, tE, alpha, log rho, log s, l
 
 ### `fit_point_heavy(ls, lq, data, cfg, warm=None)`
 Deep search at fixed (s, q) from about 1000 diverse starts (used for the outlier recalculation): `heavy_starts`
-screens them and returns the best `cfg["n_heavy"]` (30), `heavy_explore` fits one of them (Nelder–Mead, or with
-`cfg["heavy_optimizer"] = "nm_lm"` Nelder–Mead + Levenberg–Marquardt: 2.4× cheaper, but 1 of 256 points of a test
-map ended 4.6 worse, so the default is `"nm"`). The map stages run the 30 explorations of each outlier as separate
+screens them and returns the best `cfg["n_heavy"]` (30), `heavy_explore` fits one of them: Nelder–Mead 300, then
+with `cfg["heavy_optimizer"] = "nm_lm"` (default) a short Nelder–Mead and Levenberg–Marquardt with the Jacobian of
+`cfg["heavy_jac"]` (`"analytic"` by default, see `lm_jac`), or with `"nm"` 1500 Nelder–Mead evaluations. 17 × 17 test
+lattice: outlier stage 1172 → 471 CPU-s with the same map as Nelder–Mead (finite-difference LM: 529 CPU-s and
+slightly more points worse by > 1). The map stages run the 30 explorations of each outlier as separate
 tasks, so a few outliers no longer occupy a few workers for a minute while the others idle (16 × 16 test lattice:
 outlier stage 57 s at 17 % CPU use before).
 
@@ -251,6 +253,7 @@ Options of the maps. `optimizer="nm_lm"`, `smooth=0.2`, `interp_start`, `lm_gate
 | `adaptive=False` | `densify`: where the equally nearest known solutions agree (same band, χ² spread < 0.1 dex), accept one light curve at the interpolated start as the point's value (a true profile value, an upper bound) before trying Levenberg–Marquardt. Measured on the 4× block: point stage unchanged (140 vs 135 CPU-s), refinement doubled (83 vs 39) because the sweeps then repair the slightly worse values; off |
 | `bin_K=1.0`, `bin_tol=0.05` | maps: nights beyond `bin_K` tE from t0 are binned per night (see `bin_wings`), each checked against the best model with tolerance `bin_tol` in χ². `bin_K=0.5` measured 10 % less CPU on the 4× block with the same bands, but models far from the best fit can have caustic features between 0.5 and 1 tE that the check at the best fit does not see, so the default stays at 1 |
 | `profile_interp=False`, `profile_dedupe=False` | the same two devices for the first stage of `alpha_profile` (`maps._sa_point`): LM alone from a start interpolated from the equally nearest known solutions, gated by their mean χ², and starts in the basin of one already fitted skipped. Measured on a 10 × 20 (log s, α) block densified from a coarse profile: 2716 → 1924 CPU-s (1.4×), but 28.5 % instead of 20 % of the points worse by > 1 against the reference block, so off by default; worth switching on for exploratory profiles |
+| `heavy_optimizer="nm_lm"`, `heavy_jac="analytic"` | the outlier deep search's refinement: Nelder–Mead + Levenberg–Marquardt with the analytic Jacobian. Its starts are far from the minimum, which is where the exact Jacobian pays: 2.5× less CPU in the stage than Nelder–Mead, identical map; with finite differences slightly more points worse by > 1 |
 | `lm_jac="fd"` | Jacobian of the Levenberg–Marquardt fits: forward differences (6 light curves per iteration), or `"analytic"`: the gradient of the point-source magnification through the source position (`nbmag._point_grad`, exact at point-source points, with the quadrupole term's ρ-derivative at finite-source points) and differences only at the contour points, projected per data set as in variable projection (`model.residual_jacobian`, Kaufman's form). Fewer evaluations per fit (synthetic event: 14 vs 43), but on MOA-2022-BLG-091, where 30 % of the evaluated points are finite-source points with an approximate gradient, the 4× block took 183 instead of 117 CPU-s in the point stage; for point-source-dominated events only |
 | `dedupe=True` | lattice-point fits (`lattice` stage 3, `densify`): the starts are fitted in the order of their χ² at the point, and a start in the basin of one already fitted (same t0 to 1 % tE, t_eff to 2 %, ln tE to 0.02, α to 0.02, log t⋆ to 0.05) is skipped; the nearest solutions of a converged coarse map are usually the same solution. Alone 2.6× less CPU in the point stage |
 

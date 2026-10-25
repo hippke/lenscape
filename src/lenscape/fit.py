@@ -374,8 +374,9 @@ def heavy_explore(ls, lq, data, cfg, x0):
     if cfg.get("heavy_optimizer", cfg.get("optimizer", "nm")) != "nm":
         fr = lambda y: model.chi2_residuals(be, np.asarray(full_p(co.to_x(y), ls, lq), float), data)
         sim = np.vstack([r.x] + [r.x + np.eye(5)[m] * st for m, st in enumerate(co.steps(r.x, 0.3))])
+        jac = lm_jacobian(be, data, ls, lq, co) if cfg.get("heavy_jac", cfg.get("lm_jac", "fd")) == "analytic" else None
         c, y = nm_then_lm(g, fr, r.x, sim, cfg.get("explore_nfev", 100), lm_tol=cfg.get("lm_tol", 1e-3),
-                          fatol=cfg.get("nm_fatol", 1e-2))
+                          fatol=cfg.get("nm_fatol", 1e-2), jac=jac)
     else:
         r = _nm(g, r.x, 1500, 0.3, 1e-3)
         c, y = r.fun, r.x

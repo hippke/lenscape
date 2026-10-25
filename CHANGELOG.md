@@ -53,6 +53,9 @@ First public version.
   (`nbmag._point_grad`, `contour.lc_full_grad`, `model.residual_jacobian`, `fit.lm_jacobian`); fewer evaluations
   per fit, but slower on caustic-crossing data where the finite-source points dominate, so the default stays
   forward differences.
+- Outlier deep search with Nelder–Mead + Levenberg–Marquardt and the analytic Jacobian by default
+  (`heavy_optimizer="nm_lm"`, `heavy_jac="analytic"`): 2.5× less CPU in the stage, same map; the exact Jacobian
+  matters there because the starts are far from the minimum.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.
