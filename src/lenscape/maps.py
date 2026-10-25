@@ -175,7 +175,8 @@ def _prepare(data, cfg, best, bin_wings):
         cfg["seed"] = cfg.get("seed") or F.seed_from_data(data)
     if bin_wings and best is not None:
         # runs that a linear model within a night misrepresents at the best fit (an anomaly beyond one tE) stay unbinned
-        fitdata = D.bin_wings(data, best[0], best[2], model=(F.make_backend(cfg["grid_backend"]), best))
+        fitdata = D.bin_wings(data, best[0], best[2], K=cfg.get("bin_K", 1.0), model=(F.make_backend(cfg["grid_backend"]), best),
+                              tol=cfg.get("bin_tol", 0.05))
     else:
         fitdata = data
     G._DATA = fitdata
