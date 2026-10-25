@@ -301,6 +301,10 @@ def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log
         log(f"neighbour refinement, pass {sweep + 1}: {int(checked.sum())} cells checked, {n} improved")
         if n == 0:
             break
+    else:
+        if max_sweeps and n:
+            log(f"WARNING: neighbour refinement stopped at max_sweeps={max_sweeps} with {n} cells still improving; "
+                "the map is not converged (fronts of better solutions leave straight edges). Continue with polish().")
     return chi, pars
 
 

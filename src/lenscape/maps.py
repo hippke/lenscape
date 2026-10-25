@@ -463,6 +463,10 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
         log(f"neighbour refinement, pass {sweep + 1}: {len(tasks)} points checked, {n} improved")
         if n == 0:
             break
+    else:
+        if max_sweeps and n:
+            log(f"WARNING: refinement stopped at max_sweeps={max_sweeps} with {n} points still improving; the map is "
+                "not converged (fronts of better solutions leave straight edges). Continue with alpha_profile_refine().")
     return chi, pars
 
 
