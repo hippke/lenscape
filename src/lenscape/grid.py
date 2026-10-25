@@ -476,8 +476,12 @@ def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log
     return chi, pars
 
 
-def _heavy_task(ls, lq, cfg, warm):
-    return F.fit_point_heavy(ls, lq, _DATA, cfg, warm)
+def _heavy_starts_task(ls, lq, cfg, warm):
+    return F.heavy_starts(ls, lq, _DATA, cfg, warm)
+
+
+def _heavy_explore_task(ls, lq, cfg, x0):
+    return F.heavy_explore(ls, lq, _DATA, cfg, x0)
 
 
 def _outliers(chi, thr):
@@ -534,7 +538,15 @@ def repair_outliers(chi, pars, logs, logq, cfg, workers=19, thr=8.0, passes=3, l
                 log("recalculate outliers: no outliers found")
             break
         warmup(cfg, _DATA)
-        res, _ = run_isolated(_heavy_task, tasks, workers, log=log, desc=f"recalculate outliers, pass {npass + 1}")
+        # the deep search of a point in two task layers: its screened starts, then one task per exploration (a few
+        # points with 30 explorations each would otherwise occupy a few workers for a minute while the rest idle)
+        st, _ = run_isolated(_heavy_starts_task, tasks, workers, log=log, desc=f"outlier starts, pass {npass + 1}")
+        ex = {(k, m): (tasks[k][0], tasks[k][1], tasks[k][2], x0) for k, xs in st.items() if xs for m, x0 in enumerate(xs)}
+        exr, _ = run_isolated(_heavy_explore_task, ex, workers, log=log, desc=f"recalculate outliers, pass {npass + 1}")
+        res = {k: None for k in tasks}
+        for (k, m), v in exr.items():
+            if v is not None and (res[k] is None or v[0] < res[k][0]):
+                res[k] = v
         n = 0
         changed = np.zeros(chi.shape, bool)
         searched = np.zeros(chi.shape, bool)
@@ -544,7 +556,8 @@ def repair_outliers(chi, pars, logs, logq, cfg, workers=19, thr=8.0, passes=3, l
                 if chi[i, j] - v[0] > min_gain:
                     changed[i, j] = True
                     n += 1
-                chi[i, j], pars[i, j] = v[0], v[1][[0, 1, 2, 5, 6]] if len(v[1]) == 7 else v[1]
+                x = np.asarray(v[1])
+                chi[i, j], pars[i, j] = v[0], x[[0, 1, 2, 5, 6]] if len(x) == 7 else x
         nfix += n
         stale = (stale & ~searched) | _near(changed)
         log(f"recalculate outliers, pass {npass + 1}: {len(tasks)} outliers, {n} improved")

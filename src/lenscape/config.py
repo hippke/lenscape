@@ -20,6 +20,7 @@ DEFAULT = dict(
     refine_backend=REFINE_BACKEND,
     seed=None,                     # start vector dict(t0, u0, tE, logrho); fit.seed_from_data(data) estimates one
     optimizer="nm_lm",             # local fits: short Nelder-Mead, then Levenberg-Marquardt ("nm": Nelder-Mead only)
+    heavy_optimizer="nm",          # deep search of outliers: Nelder-Mead refinements ("nm_lm": 2.4x cheaper, 1 of 256 points 4.6 worse)
     adaptive=False,                # densify: accept one chi2 at the interpolated start where the surroundings agree (no gain measured)
     lm_tol=0.03,                   # Levenberg-Marquardt stops when a step gains less than this in chi2 (noise ~0.07)
     nm_fatol=1e-2,                 # Nelder-Mead fatol of the local fits

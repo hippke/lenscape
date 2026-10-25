@@ -159,7 +159,12 @@ Best fit anywhere in the cell `box = (logs_lo, logs_hi, logq_lo, logq_hi)`: s an
 Returns `(chi2, x)` with the 7-vector `x = (t0, u0, tE, alpha, log rho, log s, log q)`.
 
 ### `fit_point_heavy(ls, lq, data, cfg, warm=None)`
-Deep search at fixed (s, q) from about 1000 diverse starts (used for the outlier recalculation).
+Deep search at fixed (s, q) from about 1000 diverse starts (used for the outlier recalculation): `heavy_starts`
+screens them and returns the best `cfg["n_heavy"]` (30), `heavy_explore` fits one of them (Nelder–Mead, or with
+`cfg["heavy_optimizer"] = "nm_lm"` Nelder–Mead + Levenberg–Marquardt: 2.4× cheaper, but 1 of 256 points of a test
+map ended 4.6 worse, so the default is `"nm"`). The map stages run the 30 explorations of each outlier as separate
+tasks, so a few outliers no longer occupy a few workers for a minute while the others idle (16 × 16 test lattice:
+outlier stage 57 s at 17 % CPU use before).
 
 ### `fit_full(data, p0, backend=None, rounds=3, maxfev=6000)`
 Best fit of all seven parameters from the start `p0` (Nelder–Mead, restarted `rounds` times; default backend

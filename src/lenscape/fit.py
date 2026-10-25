@@ -297,26 +297,49 @@ def fit_point_screen_d(ls, lq, data, cfg, warm=None):
     return best[0], co.to_x(best[1])
 
 
-def fit_point_heavy(ls, lq, data, cfg, warm=None):
-    """Exhaustive reference search for single cells: screen ~1080 diverse starts (alpha x tE x u0 x sign x t0),
-    explore the best n_heavy with NM (default simplex) and refine each in t_eff coordinates."""
+def heavy_starts(ls, lq, data, cfg, warm=None):
+    """Starts of the deep search (fit_point_heavy): ~1080 diverse vectors (alpha x tE x u0 x sign x t0) plus the
+    warm starts, screened by one chi2 each; the best cfg["n_heavy"] (30) are returned, best first."""
     be = make_backend(cfg["grid_backend"])
     sd = _seed(cfg.get("seed"))
+    fx = lambda x: model.chi2(be, full_p(x, ls, lq), data)
+    starts = [np.array([sd["t0"] + dt, sg * u, sd["tE"] * ft, a, sd["logrho"]])
+              for a in ALPHAS for ft in (0.5, 1.0, 2.0) for u in (0.3 * abs(sd["u0"]) + 1e-3, abs(sd["u0"]), 3 * abs(sd["u0"]))
+              for sg in (1, -1) for dt in (-1.0, 0.0, 1.0)]
+    starts += [np.asarray(w, float) for w in (warm or []) if w is not None and np.all(np.isfinite(w))]
+    c0 = np.array([fx(x) for x in starts])
+    return [starts[k] for k in np.argsort(c0)[:cfg.get("n_heavy", 30)]]
+
+
+def heavy_explore(ls, lq, data, cfg, x0):
+    """One exploration of the deep search from the start x0: Nelder-Mead (300 evaluations, default simplex), then
+    a refinement in t_eff coordinates: Nelder-Mead (1500) or, with cfg["heavy_optimizer"] = "nm_lm" (default:
+    cfg["optimizer"]), a short Nelder-Mead and Levenberg-Marquardt. Returns (chi2, x)."""
+    be = make_backend(cfg["grid_backend"])
     co = Coords("teff")
     fx = lambda x: model.chi2(be, full_p(x, ls, lq), data)
     g = lambda y: fx(co.to_x(y))
     g.coords = co
-    starts = [np.array([sd["t0"] + dt, sg * u, sd["tE"] * ft, a, sd["logrho"]])
-              for a in ALPHAS for ft in (0.5, 1.0, 2.0) for u in (0.3 * abs(sd["u0"]) + 1e-3, abs(sd["u0"]), 3 * abs(sd["u0"]))
-              for sg in (1, -1) for dt in (-1.0, 0.0, 1.0)]
-    starts += [np.asarray(w) for w in (warm or []) if w is not None and np.all(np.isfinite(w))]
-    c0 = np.array([fx(x) for x in starts])
-    best = (np.inf, None)
-    for k in np.argsort(c0)[:cfg.get("n_heavy", 30)]:
-        r = _nm(g, co.from_x(starts[k]), 300, None)
+    r = _nm(g, co.from_x(np.asarray(x0, float)), 300, None)
+    if cfg.get("heavy_optimizer", cfg.get("optimizer", "nm")) != "nm":
+        fr = lambda y: model.chi2_residuals(be, np.asarray(full_p(co.to_x(y), ls, lq), float), data)
+        sim = np.vstack([r.x] + [r.x + np.eye(5)[m] * st for m, st in enumerate(co.steps(r.x, 0.3))])
+        c, y = nm_then_lm(g, fr, r.x, sim, cfg.get("explore_nfev", 100), lm_tol=cfg.get("lm_tol", 1e-3),
+                          fatol=cfg.get("nm_fatol", 1e-2))
+    else:
         r = _nm(g, r.x, 1500, 0.3, 1e-3)
-        if r.fun < best[0]:
-            best = (r.fun, co.to_x(r.x))
+        c, y = r.fun, r.x
+    return float(c), co.to_x(y)
+
+
+def fit_point_heavy(ls, lq, data, cfg, warm=None):
+    """Exhaustive reference search for single cells: heavy_starts, then heavy_explore from each (serially; the map
+    stages run the explorations as separate tasks). Returns (chi2, x)."""
+    best = (np.inf, None)
+    for x0 in heavy_starts(ls, lq, data, cfg, warm):
+        c, x = heavy_explore(ls, lq, data, cfg, x0)
+        if c < best[0]:
+            best = (c, x)
     return best[0], np.asarray(best[1])
 
 

@@ -9,9 +9,10 @@ def test_repair_finds_and_fixes_spike(monkeypatch):
     true = chi.copy()
     chi[2, 3] += 40.0                                      # stuck fit
     pars = np.tile(np.array([756.0, 0.03, 30.0, 4.4, -3.0]), (5, 5, 1))
-    monkeypatch.setattr(G.F, "fit_point_heavy",
-                        lambda ls, lq, data, cfg, warm: (float(true[np.argmin(abs(logs - ls)), np.argmin(abs(logq - lq))]),
-                                                         np.array([756.0, 0.03, 30.0, ls, lq, 4.4, -3.0])))
+    monkeypatch.setattr(G.F, "heavy_starts", lambda ls, lq, data, cfg, warm: [np.zeros(5), np.ones(5)])
+    monkeypatch.setattr(G.F, "heavy_explore",
+                        lambda ls, lq, data, cfg, x0: (float(true[np.argmin(abs(logs - ls)), np.argmin(abs(logq - lq))])
+                                                       + x0[0], np.array([756.0, 0.03, 30.0, ls, lq, 4.4, -3.0])))
     monkeypatch.setattr(G, "warmup", lambda cfg, data: None)
     msgs = []
     c2, p2, n = G.repair_outliers(chi, pars, logs, logq, {}, workers=2, log=msgs.append, passes=3)
