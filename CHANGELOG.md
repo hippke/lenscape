@@ -10,6 +10,11 @@ First public version.
   extrapolation from two neighbours on either side; the second finds stuck fits on slopes that the first missed),
   counts only improvements by more than `min_gain` (1.0) as repairs and does not search a point again unless its
   neighbourhood changed by more than that: ridges of the profile were deep-searched in every pass of every map.
+- Fix: refits of rough points (`smooth`) rank the neighbours' solutions by one χ² each and fit the best three
+  instead of all eight; gains below the refinement margin are kept but no longer mark the neighbours for another
+  check (noise-level gains cascaded through the map until `max_sweeps`); the roughness test interpolates
+  quadratically through two neighbours on either side, so the curvature of a coarse map no longer counts as
+  roughness. Same for (log s, α) profiles.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.

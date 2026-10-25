@@ -157,12 +157,22 @@ def _shift(chi, di, dj, wrap_j=False):
 
 
 def _rough(chi, tau, wrap_j=False):
-    """Cells whose chi2 exceeds the median of the means of opposite neighbour pairs (along both axes and both
-    diagonals, i.e. the linear interpolations through the cell) by more than tau: on a smooth map no cell does (also
-    not on a slope or at the edges); a fit that stopped in a worse local minimum than its neighbours' does."""
+    """Cells whose chi2 exceeds the median of the interpolations through their neighbours (along both axes and both
+    diagonals) by more than tau: the quadratic interpolation through the two neighbours on either side where those
+    exist (three points next to an edge), else the mean of the two adjacent neighbours. On a smooth map no cell does, also not on a slope, at the
+    edges or, with the 4-point rule, on a curved surface (a coarse lattice's ridges and valley walls passed the
+    linear test by their curvature alone and were refit in every sweep); a fit that stopped in a worse local
+    minimum than its neighbours' does."""
     mids = []
     for di, dj in ((1, 0), (0, 1), (1, 1), (1, -1)):
-        mids.append(0.5 * (_shift(chi, di, dj, wrap_j) + _shift(chi, -di, -dj, wrap_j)))
+        n1, p1 = _shift(chi, -di, -dj, wrap_j), _shift(chi, di, dj, wrap_j)
+        n2, p2 = _shift(chi, -2 * di, -2 * dj, wrap_j), _shift(chi, 2 * di, 2 * dj, wrap_j)
+        lin = 0.5 * (n1 + p1)
+        quad = (-n2 + 4.0 * n1 + 4.0 * p1 - p2) / 6.0                 # through -2, -1, +1, +2
+        q_r = n1 / 3.0 + p1 - p2 / 3.0                                 # through -1, +1, +2 (second row from an edge)
+        q_l = p1 / 3.0 + n1 - n2 / 3.0
+        one = np.where(np.isfinite(q_r), q_r, q_l)
+        mids.append(np.where(np.isfinite(quad), quad, np.where(np.isfinite(one), one, lin)))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)         # cells without any complete pair (corners)
         med = np.nanmedian(np.array(mids), axis=0)
@@ -172,7 +182,8 @@ def _rough(chi, tau, wrap_j=False):
 def _relax_rows(rows, chi, pars, logs, logq, cfg, margin, active=None, cols=None, force=None):
     """For cells in `rows` (columns `cols`, default all), try the 8 neighbours' solutions; refine when one
     beats the current chi2. Reads only the previous sweep's arrays (Jacobi), so the split into tasks does not change
-    the result. force: cells refitted from all neighbours' solutions (no pre-check), kept if better by > 0.01."""
+    the result. force: cells refitted from the neighbours' solutions ranked by their one chi2 without the margin
+    (the best relax_tries + 1 of them; all eight were fitted before), kept if better by > 0.01."""
     from . import model
     be = F.make_backend(cfg["grid_backend"])
     co = F.Coords(cfg.get("coords", "teff"))
@@ -192,15 +203,13 @@ def _relax_rows(rows, chi, pars, logs, logq, cfg, margin, active=None, cols=None
                 for dj in (-1, 0, 1):
                     a, b = i + di, j + dj
                     if (di or dj) and 0 <= a < ni and 0 <= b < nj and np.all(np.isfinite(pars[a, b])):
-                        if forced:
-                            cands.append((chi[a, b], pars[a, b]))
-                            continue
                         c = fx(pars[a, b])
-                        if c < best_c - margin:
+                        if forced or c < best_c - margin:     # forced: no margin, but ranked by the same chi2
                             cands.append((c, pars[a, b]))
             cands.sort(key=lambda z: z[0])
             new = None
-            for c0, x0 in cands[:8 if forced else cfg.get("relax_tries", 2)]:
+            tries = cfg.get("relax_tries", 2)
+            for c0, x0 in cands[:tries + 1 if forced else tries]:
                 if cfg.get("optimizer", "nm") != "nm":
                     rc, ry = F.local_fit(be, _DATA, ls, lq, co.from_x(x0), cfg, cfg.get("refine_step", 0.3),
                                          cfg.get("relax_nfev", 600))
@@ -291,14 +300,21 @@ def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log
         for k, (i, cols) in enumerate(segs):
             if res.get(k) is None:                   # task lost (crash): its cells count as not checked
                 checked[i, cols] = False
+        small = 0
         for v in res.values():
             for i, j, c, x in v or []:
                 if c < chi[i, j] or not np.isfinite(chi[i, j]):
+                    # a forced refit may gain less than the margin: kept, but it is no reason to re-check the
+                    # neighbours (noise-level gains cascaded through the map until max_sweeps)
+                    if chi[i, j] - c > margin or not np.isfinite(chi[i, j]):
+                        changed[i, j] = True
+                        n += 1
+                    else:
+                        small += 1
                     chi[i, j], pars[i, j] = c, x
-                    changed[i, j] = True
-                    n += 1
         stale = (stale & ~checked) | _near(changed)
-        log(f"neighbour refinement, pass {sweep + 1}: {int(checked.sum())} cells checked, {n} improved")
+        log(f"neighbour refinement, pass {sweep + 1}: {int(checked.sum())} cells checked, {n} improved"
+            + (f" ({small} by less than {margin:g})" if small else ""))
         if n == 0:
             break
     else:

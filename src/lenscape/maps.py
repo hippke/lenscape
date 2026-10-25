@@ -374,14 +374,20 @@ SA_LM_STEP = np.array([1e-4, 1e-5, 1e-4, 1e-4, 1e-3])
 SA_LM_CAP = np.array([0.3, 0.05, 0.1, 0.05, 0.2])
 
 
-def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0):
+def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0, top=None):
     """Best fit at fixed (log s, alpha) from 7-vector starts (their log s and alpha are replaced). cand/cval: in
-    refinement sweeps, refit only if a start already beats cval - margin with one chi2 evaluation."""
+    refinement sweeps, refit only if a start already beats cval - margin with one chi2 evaluation. top: fit only
+    the `top` starts with the lowest chi2 at the point (forced refits of rough points: all of up to eight were
+    fitted before)."""
     be = F.make_backend(cfg["grid_backend"])
     als = np.broadcast_to(np.asarray(al, float), (len(starts),))    # model alpha per start (u0 signs may differ)
     ys = [(_sa_coords(np.asarray(s, float)), a) for s, a in zip(starts, als)]
-    if cand is not None:
-        ys = [(y, a) for y, a in ys if M.chi2(be, _sa_vector(y, ls, a), G._DATA) < cval - margin]
+    if cand is not None or top is not None:
+        c0 = [M.chi2(be, _sa_vector(y, ls, a), G._DATA) for y, a in ys]
+        if cand is not None:
+            ys = [v for v, c in zip(ys, c0) if c < cval - margin]
+        else:
+            ys = [v for _, v in sorted(zip(c0, ys), key=lambda z: z[0])[:top]]
         if not ys:
             return (np.inf, None)                      # nothing to refit (None is reserved for a lost task)
     best = (np.inf, None)
@@ -444,7 +450,8 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
                     cand = [pars[k] for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k]))
                             and (not one_sign or np.sign(pars[k][1]) == np.sign(u0_ref))]
                     if cand:
-                        tasks[(i, j)] = (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg)
+                        tasks[(i, j)] = (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg,
+                                         None, np.inf, margin, 3)
                     continue
                 cand = [pars[k] for k in nb if np.isfinite(chi[k]) and (not np.isfinite(chi[i, j])
                                                                         or chi[k] < chi[i, j] - margin)
@@ -461,14 +468,19 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
         for k in tasks:
             if k not in res or res[k] is None:          # task lost (crash): check again next sweep
                 checked[k] = False
+        small = 0
         for k, v in res.items():
             if v is not None and v[1] is not None and (v[0] < chi[k] - (0.01 if force[k] else 1e-9)
                                                        or not np.isfinite(chi[k])):
+                if chi[k] - v[0] > margin or not np.isfinite(chi[k]):   # gains below the margin do not propagate
+                    changed[k] = True
+                    n += 1
+                else:
+                    small += 1
                 chi[k], pars[k] = v
-                changed[k] = True
-                n += 1
         stale = (stale & ~checked) | G._near(changed, wrap)
-        log(f"neighbour refinement, pass {sweep + 1}: {len(tasks)} points checked, {n} improved")
+        log(f"neighbour refinement, pass {sweep + 1}: {len(tasks)} points checked, {n} improved"
+            + (f" ({small} by less than {margin:g})" if small else ""))
         if n == 0:
             break
     else:

@@ -336,6 +336,8 @@ def test_rough_mask():
     from lenscape.grid import _rough
     c = np.add.outer(np.arange(6.0), np.arange(5.0))            # smooth plane: no cell is rough
     assert not _rough(c, 0.2).any()
+    c = -np.add.outer(np.arange(7.0) ** 2, np.arange(6.0) ** 2)   # smooth curved (concave) surface: none either
+    assert not _rough(c, 0.2).any()
     c[2, 3] += 1.0
     m = _rough(c, 0.2)
     assert m[2, 3] and m.sum() == 1
