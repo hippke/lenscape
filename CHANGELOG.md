@@ -47,6 +47,8 @@ First public version.
   (`bin_K=0.5`: −10 % CPU on the test block, same bands; default 1.0).
 - `maps.multilevel`: lattice on a coarse sub-lattice, then densify level by level (the route for fine maps; the
   coarse lattice must resolve the valleys).
+- `alpha_profile` stage 1 options `profile_interp` and `profile_dedupe` (gated LM start and start deduplication as
+  in `densify`): 1.4× less CPU on a profile densified from a coarser one, with ~8 % more points worse by > 1, so off.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.

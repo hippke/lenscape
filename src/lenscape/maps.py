@@ -466,6 +466,62 @@ def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0, top=None):
     return best
 
 
+def _same_sa(y, z):
+    """_same_start for the (log s, alpha) fit coordinates (t0, t_eff, ln tE, log q, log t_*)."""
+    tE = np.exp(0.5 * (y[2] + z[2]))
+    return (abs(y[0] - z[0]) < 0.01 * tE and abs(y[1] - z[1]) < 0.02 * abs(y[1]) + 1e-4 * tE
+            and abs(y[2] - z[2]) < 0.02 and abs(y[3] - z[3]) < 0.02 and abs(y[4] - z[4]) < 0.05)
+
+
+def _sa_point(ls, al, starts, cfg, lm_start=None, c_ref=np.inf):
+    """First-stage fit of a (log s, alpha) profile point from 7-vector starts (all of one u0 sign, fitted at the
+    model alpha al), as _point_from_starts does for lattice points: Levenberg-Marquardt alone from the interpolated
+    start lm_start (fit coordinates) settles the point when its chi2 lies within cfg["lm_gate"] of c_ref (the mean
+    chi2 of the interpolated solutions) and below every start's own chi2; otherwise the starts are fitted in the
+    order of their chi2 at the point, skipping starts in the basin of one already fitted (cfg["dedupe"])."""
+    be = F.make_backend(cfg["grid_backend"])
+    f = lambda y: M.chi2(be, _sa_vector(y, ls, al), G._DATA)
+    pre = []
+    for s_ in starts:
+        y = _sa_coords(np.asarray(s_, float))
+        pre.append((f(y), y))
+    best = (np.inf, None)
+    gate = cfg.get("lm_gate", 1.0)
+    if lm_start is not None and cfg.get("profile_interp", True):
+        y = np.asarray(lm_start, float)
+        fr = lambda y: M.chi2_residuals(be, _sa_vector(y, ls, al), G._DATA)
+        q = least_squares_lm(fr, y, SA_LM_STEP, SA_LM_CAP, tol=cfg.get("lm_tol", 1e-3))
+        c = f(q.x)
+        if np.isfinite(c):
+            best = (c, _sa_vector(q.x, ls, al))
+            if gate is not None and c < c_ref + gate and all(c < c0 for c0, _ in pre):
+                return best
+    done = []
+    for c, y in sorted(pre, key=lambda v: v[0]):
+        if cfg.get("profile_dedupe", True) and any(_same_sa(y, z) for z in done):
+            continue
+        done.append(y.copy())
+        c1, y1 = _sa_fit_one(be, ls, al, y, cfg)
+        done.append(np.asarray(y1))
+        if c1 < c:
+            c, y = c1, y1
+        if c < best[0]:
+            best = (c, _sa_vector(y, ls, al))
+    return best
+
+
+def _sa_interp(known, near, dn, sg, tie=0.05, max_dist=1.5):
+    """Interpolated start of a profile point: the mean (fit coordinates) of the equally nearest known solutions
+    with the sign sg of u0, and the mean of their chi2; None if too far or if their log q spreads by > 0.5."""
+    k = [m for m, d in zip(near, dn) if d <= dn[0] + tie and np.sign(known[m][0][1]) == sg][:8]
+    if not k or dn[0] > max_dist:
+        return None
+    Y = np.array([_sa_coords(np.asarray(known[m][0], float)) for m in k])
+    if np.ptp(Y[:, 3]) > 0.5:
+        return None
+    return Y.mean(0), float(np.mean([known[m][1] for m in k]))
+
+
 def _sa_fit_one(be, ls, al, y, cfg):
     """One start y (coordinates of _sa_coords) at fixed (log s, model alpha al): (chi2, y)."""
     f = lambda y: M.chi2(be, _sa_vector(y, ls, al), G._DATA)
@@ -676,15 +732,18 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
     tasks = {}
     for i, ls in enumerate(logs):
         for j, al in enumerate(alphas):
-            near, dn = knn(i, j)
+            nn_all, dn_all = knn(i, j)
+            near, dn = nn_all, dn_all
             dist = dict(zip(near.tolist(), dn.tolist()))
             near = [near[0]] + sorted(near[1:], key=lambda k: (dist[k] > 2.0, known[k][1]))[:n_starts - 1]
             # starts of one u0 sign per point (the nearest one's), fitted at the matching model alpha
             sg = np.sign(known[near[0]][0][1])
             starts = [known[k][0] for k in near if np.sign(known[k][0][1]) == sg]
-            tasks[(i, j)] = (float(ls), float(model_alpha(known[near[0]][0], al)), starts, cfg)
+            ip = _sa_interp(known, nn_all, dn_all, sg) if cfg.get("profile_interp", True) else None
+            tasks[(i, j)] = (float(ls), float(model_alpha(known[near[0]][0], al)), starts, cfg,
+                             ip[0] if ip else None, ip[1] if ip else np.inf)
     G.warmup(cfg, fitdata)
-    res, _ = G.run_isolated(_sa_fit, tasks, workers, log=log, desc="(log s, alpha) fits")
+    res, _ = G.run_isolated(_sa_point, tasks, workers, log=log, desc="(log s, alpha) fits")
     chi = np.full((len(logs), len(alphas)), np.nan)
     pars = np.full((len(logs), len(alphas), 7), np.nan)
     for (i, j), v in res.items():

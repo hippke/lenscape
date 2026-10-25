@@ -31,6 +31,8 @@ DEFAULT = dict(
     box_lm=True,                   # cell fits refined by short Nelder-Mead + Levenberg-Marquardt in (log s, log q)
     refine_gap=None,               # refine the second-best explored trial only within this gap of the best (None: always)
     profile_optimizer="nm",        # (log s, alpha) profile fits: Nelder-Mead ("nm_lm" is faster but weaker there)
+    profile_interp=False,          # profile stage 1: LM alone from an interpolated start first (1.4x faster, ~8 % of points worse by > 1)
+    profile_dedupe=False,          # profile stage 1: skip starts in the basin of one already fitted
 )
 
 # backwards-compatible name
