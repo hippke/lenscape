@@ -626,6 +626,28 @@ def lc_full_grad(ls, lq, u0, alpha, lr, tE, t0, t, tol, hexeps, ctol, ld=0.0):
                         z[i] = z[i] + r * (z[i] - zp[i])
         A[k], flag[k] = nbmag._one(a, m1, m2, s, q, rho, y1, y2, c, z, zs, tol, hexeps, imgs, par, work, ld)
         m0, g1, g2 = nbmag._point_grad(a, m1, m2, y1, y2, z)
+        if flag[k] == 1:
+            # finite-source correction ~ rho^2 lap / 8 (Gould 2008 quadrupole, limb-darkening factor as in _one):
+            # its gradient from central differences of the (analytic, noise-free) Laplacian at four shifted source
+            # positions, each a warm-started point-source solve
+            h = 0.05 * rho
+            ya = abs(y2)
+            for i in range(5):
+                zs[i] = z[i]
+            lp = nbmag._point(a, m1, m2, s, q, y1 + h, ya, c, zs, True)[6]
+            for i in range(5):
+                zs[i] = z[i]
+            lm = nbmag._point(a, m1, m2, s, q, y1 - h, ya, c, zs, True)[6]
+            for i in range(5):
+                zs[i] = z[i]
+            lq_ = nbmag._point(a, m1, m2, s, q, y1, ya + h, c, zs, True)[6]
+            for i in range(5):
+                zs[i] = z[i]
+            lmq = nbmag._point(a, m1, m2, s, q, y1, abs(ya - h), c, zs, True)[6]
+            fac = 0.125 * rho * rho * (1.0 - 0.2 * 2.0 * ld / (3.0 - ld))
+            g1 += fac * (lp - lm) / (2.0 * h)
+            gq = fac * (lq_ - lmq) / (2.0 * h)
+            g2 += gq if y2 >= 0 else -gq
         gy1[k], gy2[k] = g1, g2
         if flag[k] == 2:
             Ak, st, _ = mag_disk_ld(s, q, y1, y2, rho, ctol, ld, 8, 2048, z)
