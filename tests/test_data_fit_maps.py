@@ -330,3 +330,39 @@ def test_alpha_profile_keeps_the_convention_of_a_previous_profile():
     r2 = maps.alpha_profile([m], d, logs, alphas, best=TRUE, workers=2, log=lambda *a: None)
     assert r2["u0_ref"] == np.sign(r["u0_ref"]) or np.sign(r2["u0_ref"]) == np.sign(r["u0_ref"])
     assert np.nanmax(r2["chi2"] - r["chi2"]) < 1.0
+
+
+def test_rough_mask():
+    from lenscape.grid import _rough
+    c = np.add.outer(np.arange(6.0), np.arange(5.0))            # smooth plane: no cell is rough
+    assert not _rough(c, 0.2).any()
+    c[2, 3] += 1.0
+    m = _rough(c, 0.2)
+    assert m[2, 3] and m.sum() == 1
+    w = np.add.outer(np.arange(4.0), np.zeros(6))
+    w[1, 0] += 1.0
+    assert _rough(w, 0.2, wrap_j=True)[1, 0]
+
+
+def test_forced_refit_of_rough_cells():
+    """grid._relax_rows with a force mask refits a cell from all neighbours' solutions even when the one-chi2
+    pre-check (here disabled by a huge margin) would not trigger; relax(smooth=...) never makes a cell worse."""
+    from lenscape import grid as G
+    d = synthetic(n=60, efac=4.0)
+    cfg = dict(C.DEFAULT, seed=dict(t0=0.0, u0=0.08, tE=25.0, logrho=-2.8))
+    be = F.make_backend(C.GRID_BACKEND)
+    logs = TRUE[3] + np.linspace(-0.01, 0.01, 3)
+    logq = TRUE[4] + np.linspace(-0.05, 0.05, 3)
+    good = np.r_[TRUE[:3], TRUE[5:]]
+    pars = np.tile(good, (3, 3, 1))
+    chi = np.array([[M.chi2(be, F.full_p(good, ls, lq), d) for lq in logq] for ls in logs])
+    spoil = good + np.array([0.3, 0.0, 0.5, 0.01, 0.0])
+    pars[1, 1] = spoil
+    chi[1, 1] = M.chi2(be, F.full_p(spoil, logs[1], logq[1]), d)
+    G._DATA = d
+    force = np.zeros((3, 3), bool)
+    force[1, 1] = True
+    out = G._relax_rows([1], chi, pars, logs, logq, cfg, 1e9, None, [1], force)
+    assert out and out[0][2] < chi[1, 1] - 0.01
+    c2, _ = G.relax(chi, pars, logs, logq, cfg, workers=2, data=d, smooth=0.2, log=lambda *a: None)
+    assert np.all(c2 <= chi + 1e-9) and c2[1, 1] < chi[1, 1] - 0.01

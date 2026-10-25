@@ -15,6 +15,8 @@ First public version.
   fewer checks).
 - `cfg["optimizer"] = "nm_lm"`: short Nelder–Mead then Levenberg–Marquardt (`optimize.least_squares_lm`, residual
   vectors `model.chi2_residuals` also for binned data): 3–4× faster map refinement at the same quality.
+- `cfg["smooth"]`: refinement of rough points (χ² above the interpolation of their neighbours) from all neighbours'
+  solutions; removes the speckle of stuck fits in maps. (log s, α) maps wrap α only if the grid covers 2π.
 - `fit.offset_partner` / `fit.fit_partner`: start for the offset-degenerate partner of a solution.
 - `cfg["interp_start"]` for `densify`; `maps.alpha_profile_refine`; (log s, α) refinement now spreads solutions of
   both signs of u0.

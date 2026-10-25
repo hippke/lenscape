@@ -6,6 +6,7 @@ every rebuilt pool before other cells finish. So each task runs in its own forke
 process (cheap: ms per fork vs ~10 s per cell); a crash costs only that task, which is retried once and
 then reported with its exit signal.
 """
+import warnings
 import os, time, pickle
 import numpy as np
 import multiprocessing as mp
@@ -143,10 +144,35 @@ def run_grid(logs, logq, cfg, workers=19, out=None, log=print, data=None):
     return chi, pars, cpu, wall
 
 
-def _relax_rows(rows, chi, pars, logs, logq, cfg, margin, active=None, cols=None):
+def _shift(chi, di, dj, wrap_j=False):
+    """Array whose [i, j] is chi[i + di, j + dj] (NaN outside; second axis periodic if wrap_j)."""
+    ni, nj = chi.shape
+    out = np.full((ni, nj), np.nan)
+    src = chi[max(0, di):ni + min(0, di)]
+    if wrap_j:
+        out[max(0, -di):ni + min(0, -di)] = np.roll(src, -dj, axis=1)
+    else:
+        out[max(0, -di):ni + min(0, -di), max(0, -dj):nj + min(0, -dj)] = src[:, max(0, dj):nj + min(0, dj)]
+    return out
+
+
+def _rough(chi, tau, wrap_j=False):
+    """Cells whose chi2 exceeds the median of the means of opposite neighbour pairs (along both axes and both
+    diagonals, i.e. the linear interpolations through the cell) by more than tau: on a smooth map no cell does (also
+    not on a slope or at the edges); a fit that stopped in a worse local minimum than its neighbours' does."""
+    mids = []
+    for di, dj in ((1, 0), (0, 1), (1, 1), (1, -1)):
+        mids.append(0.5 * (_shift(chi, di, dj, wrap_j) + _shift(chi, -di, -dj, wrap_j)))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)         # cells without any complete pair (corners)
+        med = np.nanmedian(np.array(mids), axis=0)
+    return np.isfinite(chi) & np.isfinite(med) & (chi > med + tau)
+
+
+def _relax_rows(rows, chi, pars, logs, logq, cfg, margin, active=None, cols=None, force=None):
     """For cells in `rows` (columns `cols`, default all), try the 8 neighbours' solutions; refine when one
     beats the current chi2. Reads only the previous sweep's arrays (Jacobi), so the split into tasks does not change
-    the result."""
+    the result. force: cells refitted from all neighbours' solutions (no pre-check), kept if better by > 0.01."""
     from . import model
     be = F.make_backend(cfg["grid_backend"])
     co = F.Coords(cfg.get("coords", "teff"))
@@ -159,17 +185,22 @@ def _relax_rows(rows, chi, pars, logs, logq, cfg, margin, active=None, cols=None
             ls, lq = float(logs[i]), float(logq[j])
             fx = lambda x: model.chi2(be, F.full_p(x, ls, lq), _DATA)
             best_c = chi[i, j] if np.isfinite(chi[i, j]) else np.inf
+            forced = force is not None and force[i, j]
+            mg = 0.01 if forced else margin
             cands = []
             for di in (-1, 0, 1):
                 for dj in (-1, 0, 1):
                     a, b = i + di, j + dj
                     if (di or dj) and 0 <= a < ni and 0 <= b < nj and np.all(np.isfinite(pars[a, b])):
+                        if forced:
+                            cands.append((chi[a, b], pars[a, b]))
+                            continue
                         c = fx(pars[a, b])
                         if c < best_c - margin:
                             cands.append((c, pars[a, b]))
             cands.sort(key=lambda z: z[0])
             new = None
-            for c0, x0 in cands[:cfg.get("relax_tries", 2)]:
+            for c0, x0 in cands[:8 if forced else cfg.get("relax_tries", 2)]:
                 if cfg.get("optimizer", "nm") != "nm":
                     rc, ry = F.local_fit(be, _DATA, ls, lq, co.from_x(x0), cfg, cfg.get("refine_step", 0.3),
                                          cfg.get("relax_nfev", 600))
@@ -178,7 +209,7 @@ def _relax_rows(rows, chi, pars, logs, logq, cfg, margin, active=None, cols=None
                     f.coords = co
                     r = F._nm(f, co.from_x(x0), cfg.get("relax_nfev", 600), cfg.get("refine_step", 0.3), 1e-2)
                     rc, ry = r.fun, r.x
-                if rc < best_c - margin:
+                if rc < best_c - mg:
                     best_c, new = rc, co.to_x(ry)
             if new is not None:
                 out.append((i, j, best_c, new))
@@ -204,19 +235,23 @@ def _near(mask, wrap_j=False):
 
 
 def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log=print, data=None, dchi2_cut=None,
-          seg=5, changed_only=True):
+          seg=5, changed_only=True, smooth=None):
     """Repeat neighbour-relaxation sweeps (rows in parallel, isolated processes) until no cell improves.
     dchi2_cut: only relax cells with Delta chi2 < cut (vs the current minimum) and their 8 neighbours.
     changed_only: after the first sweep, check only cells whose 3 x 3 neighbourhood changed since they were last
     checked. A cell's refit depends only on its own and its neighbours'
     values and the fits are deterministic, so the other cells would give the same (rejected) result again: identical
-    output, far fewer refits in late sweeps."""
+    output, far fewer refits in late sweeps.
+    smooth: also refit cells whose chi2 exceeds the median of their neighbours by more than `smooth` from all
+    neighbours' solutions, without the one-chi2 pre-check and margin (fits that stopped in a slightly worse local
+    minimum than their neighbours' leave a speckle of 1-3 in chi2 that the margin-1 trigger never catches)."""
     global _DATA
     if data is not None:
         _DATA = data
     if _DATA is None:
         _DATA = _default_data()
     chi, pars = chi.copy(), pars.copy()
+    smooth = cfg.get("smooth") if smooth is None else smooth
     stale = np.ones(chi.shape, bool)                 # inputs changed since the cell was last checked
     for sweep in range(max_sweeps):
         active = None
@@ -228,6 +263,11 @@ def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log
                     active |= np.roll(np.roll(low, di, 0), dj, 1)
         if changed_only and sweep > 0:
             active = stale if active is None else active & stale
+        force = None
+        if smooth is not None:
+            force = _rough(chi, smooth) & (stale if (changed_only and sweep > 0) else True)
+            if active is not None:
+                active = active | force
         if active is not None:
             if not active.any():
                 break
@@ -243,7 +283,7 @@ def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log
             segs = [(i, c) for i, c in segs if active[i, c].any()]
         lowc = np.nan_to_num(chi - np.nanmin(chi), nan=1e30)
         segs.sort(key=lambda t: lowc[t[0], t[1]].min())
-        tasks = {k: ([i], chi, pars, logs, logq, cfg, margin, active, cols) for k, (i, cols) in enumerate(segs)}
+        tasks = {k: ([i], chi, pars, logs, logq, cfg, margin, active, cols, force) for k, (i, cols) in enumerate(segs)}
         warmup(cfg, _DATA)
         res, _ = run_isolated(_relax_rows, tasks, workers, log=log, desc=f"neighbour refinement, pass {sweep + 1}")
         n = 0

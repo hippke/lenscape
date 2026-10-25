@@ -365,25 +365,35 @@ def _sa_fit_one(be, ls, al, y, cfg):
     return c, y
 
 
-def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_sweeps, changed_only, log):
+def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_sweeps, changed_only, log, smooth=None):
     """Neighbour refinement of a (log s, alpha) profile map (alpha periodic): a point is refitted from the solutions
     of neighbours better by > margin, each at its own model alpha (a neighbour with the other sign of u0 is fitted
     at alpha - pi or alpha + pi, so solutions of both signs spread)."""
     model_alpha = lambda p, al: al if np.sign(p[1]) == np.sign(u0_ref) else al - np.pi
+    smooth = cfg.get("smooth") if smooth is None else smooth
     ns, na = chi.shape
+    # alpha is periodic only if the grid covers the full circle (a partial range, e.g. 3.6 .. 5.6, has two edges)
+    wrap = na > 1 and (alphas[-1] - alphas[0]) + (alphas[1] - alphas[0]) >= 2 * np.pi - 1e-9
     chi, pars = chi.copy(), pars.copy()
     stale = np.ones(chi.shape, bool)                 # 3 x 3 neighbourhood changed since the point was last checked
     for sweep in range(max_sweeps):
         # after the first sweep only stale points (alpha periodic): the others would repeat a rejected refit with
         # the same inputs (see grid.relax)
         need = stale if (sweep > 0 and changed_only) else np.ones(chi.shape, bool)
+        force = G._rough(chi, smooth, wrap) & need if smooth is not None else np.zeros(chi.shape, bool)
         checked = need.copy()
         tasks = {}
         for i in range(ns):
             for j in range(na):
                 if not need[i, j]:
                     continue
-                nb = [(i + a, (j + b) % na) for a in (-1, 0, 1) for b in (-1, 0, 1) if (a or b) and 0 <= i + a < ns]
+                nb = [(i + a, (j + b) % na) for a in (-1, 0, 1) for b in (-1, 0, 1)
+                      if (a or b) and 0 <= i + a < ns and (wrap or 0 <= j + b < na)]
+                if force[i, j]:                         # outlier: refit from all neighbours, no pre-check
+                    cand = [pars[k] for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k]))]
+                    if cand:
+                        tasks[(i, j)] = (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg)
+                    continue
                 cand = [pars[k] for k in nb if np.isfinite(chi[k]) and (not np.isfinite(chi[i, j])
                                                                         or chi[k] < chi[i, j] - margin)]
                 if cand:
@@ -399,11 +409,12 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
             if k not in res or res[k] is None:          # task lost (crash): check again next sweep
                 checked[k] = False
         for k, v in res.items():
-            if v is not None and v[1] is not None and (v[0] < chi[k] - 1e-9 or not np.isfinite(chi[k])):
+            if v is not None and v[1] is not None and (v[0] < chi[k] - (0.01 if force[k] else 1e-9)
+                                                       or not np.isfinite(chi[k])):
                 chi[k], pars[k] = v
                 changed[k] = True
                 n += 1
-        stale = (stale & ~checked) | G._near(changed, True)
+        stale = (stale & ~checked) | G._near(changed, wrap)
         log(f"neighbour refinement, pass {sweep + 1}: {len(tasks)} points checked, {n} improved")
         if n == 0:
             break
@@ -411,7 +422,7 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
 
 
 def alpha_profile_refine(result, data, best=None, cfg=None, workers=None, margin=1.0, max_sweeps=30, bin_wings=True,
-                         log=print, changed_only=True):
+                         log=print, changed_only=True, smooth=None):
     """More neighbour-refinement sweeps for an alpha_profile result (e.g. one stopped at max_sweeps). Returns a new
     result dict."""
     workers = _workers(workers)
@@ -421,7 +432,7 @@ def alpha_profile_refine(result, data, best=None, cfg=None, workers=None, margin
     t0 = time.time()
     G.warmup(cfg, fitdata)
     chi, pars = _alpha_sweeps(chi, pars, result["logs"], result["alphas"], u0_ref, cfg, workers, margin, max_sweeps,
-                              changed_only, log)
+                              changed_only, log, smooth)
     ref = float(min(np.nanmin(chi), result.get("chi2_ref", np.inf)))
     log(f"done in {time.time() - t0:.0f}s; lowest chi2 {ref:.2f}")
     return dict(logs=np.asarray(result["logs"]), alphas=np.asarray(result["alphas"]), chi2=chi, pars=pars,
@@ -446,7 +457,7 @@ def _plot_alpha(p, u0_ref):
 
 
 def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=None, n_starts=3, margin=1.0,
-                  max_sweeps=30, bin_wings=True, log=print, changed_only=True, u0_ref=None):
+                  max_sweeps=30, bin_wings=True, log=print, changed_only=True, u0_ref=None, smooth=None):
     """Profile chi2 over (log s, alpha): at every grid point, chi2 minimised over all other parameters including
     log q, so the map has a value everywhere (unlike a projection of lattice solutions). alpha is in the convention
     of (log s, alpha) panels: solutions with the opposite sign of u0 to the best fit are counted at alpha + pi, and
@@ -512,7 +523,8 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
         if v is not None and v[1] is not None:
             chi[i, j], pars[i, j] = v
     ST("Neighbour refinement", "refit points whose neighbours found a better solution")
-    chi, pars = _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_sweeps, changed_only, log)
+    chi, pars = _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_sweeps, changed_only, log,
+                              smooth)
     ref = float(min(np.nanmin(chi), min(c for _, c in known)))
     log(f"done in {time.time() - t0:.0f}s; lowest chi2 {ref:.2f}")
     return dict(logs=logs, alphas=alphas, chi2=chi, pars=pars, chi2_ref=ref, wall=time.time() - t0,
