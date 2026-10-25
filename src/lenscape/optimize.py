@@ -29,6 +29,7 @@ WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWIS
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
 import numpy as np
+from numba import njit
 
 
 class OptimizeResult(dict):
@@ -277,6 +278,25 @@ def bisect(f, a, b, xtol=1e-10, maxiter=200):
 # ---------------------------------------------------------------------------------------------------------------------
 # The code below is lenscape's own (GPL-3.0-or-later, like the rest of the package), not copied from SciPy.
 
+@njit(cache=True)
+def _normal_equations(J, r):
+    """J^T J and J^T r without BLAS: a (m x 5)-sized matrix product through OpenBLAS wakes its thread pool, whose
+    threads then spin (4 % of the CPU of a map stage in a perf profile when numpy was imported before lenscape)."""
+    m, n = J.shape
+    JTJ = np.zeros((n, n))
+    g = np.zeros(n)
+    for i in range(m):
+        for a in range(n):
+            v = J[i, a]
+            g[a] += v * r[i]
+            for b in range(a, n):
+                JTJ[a, b] += v * J[i, b]
+    for a in range(n):
+        for b in range(a):
+            JTJ[a, b] = JTJ[b, a]
+    return JTJ, g
+
+
 def least_squares_lm(fun, x0, h, cap, maxit=50, tol=1e-3, lam0=1e-3, jac=None):
     """Levenberg-Marquardt for sum(fun(x)**2) (RTModel-style, Bozza 2024): forward-difference Jacobian with steps h
     (larger than the numerical noise of fun, not ~1e-8), damping lam * diag(J^T J), steps scaled down so that no
@@ -301,8 +321,7 @@ def least_squares_lm(fun, x0, h, cap, maxit=50, tol=1e-3, lam0=1e-3, jac=None):
                 xk[k] += h[k]
                 J[:, k] = (fun(xk) - r) / h[k]
             nfev += n
-        g = J.T @ r
-        JTJ = J.T @ J
+        JTJ, g = _normal_equations(np.ascontiguousarray(J), np.ascontiguousarray(r))
         D = np.diag(np.diag(JTJ) + 1e-12)
         gain = None
         while lam < 1e8:

@@ -59,6 +59,9 @@ First public version.
   matters there because the starts are far from the minimum.
 - Cell fits explore each start with 150 Nelder–Mead evaluations instead of 300 (`n_explore_box`): −8 % CPU on a
   lattice from scratch with fewer points worse than the reference; 100 lost a point.
+- Levenberg–Marquardt normal equations in numba instead of BLAS (a matrix product woke OpenBLAS's thread pool when
+  numpy had been imported before lenscape, and its threads then spun), and the worker warm-up covers the LM
+  kernels.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.

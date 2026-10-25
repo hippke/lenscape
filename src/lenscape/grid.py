@@ -34,10 +34,15 @@ def warmup(cfg, data):
     """Load (or compile) the kernels in the parent, so forked tasks inherit them instead of each loading them from the
     numba disk cache (~0.1 s per task). The warm-up trajectory crosses a central caustic in the middle of the data,
     so that the point-source, hexadecapole and contour paths are all compiled."""
-    from . import model as M
+    from . import model as M, optimize as O
     be = F.make_backend(cfg.get("grid_backend", cfg))       # full strategy config or a backend config
     t = getattr(data, "t_eval", data.t)
-    M.chi2(be, np.array([float(np.median(t)), 0.005, 20.0, 0.0, -2.0, 1.0, -2.5]), data)
+    p = np.array([float(np.median(t)), 0.005, 20.0, 0.0, -2.0, 1.0, -2.5])
+    M.chi2(be, p, data)
+    M.chi2_residuals(be, p, data)                           # the LM's kernels too, or every worker compiles them
+    O._normal_equations(np.ones((3, 5)), np.ones(3))
+    if hasattr(be, "lc_grad"):
+        be.lc_grad(tuple(p), t[:8])
 
 
 PROGRESS = {"0": False, "1": True}.get(os.environ.get("LENSCAPE_PROGRESS", ""), None)   # None: only on a terminal
