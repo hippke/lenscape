@@ -4,6 +4,8 @@
 
 First public version.
 
+- Fix: `data.bin_wings` checks every binned run against the best model (maps pass `best`) and keeps runs that a
+  linear-in-time model misrepresents; an anomaly farther than one tE from t0 was binned through a straight line.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.

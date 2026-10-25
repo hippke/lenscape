@@ -91,27 +91,38 @@ class Binned:
     w tau f, w tau^2 with tau = t - weighted mean time) and the model is evaluated at t_bar +- h (value and slope),
     so chi2 is exact for a model that is linear in time within a night (test event, K = 1: |error| <= 0.03 over 261
     parameter vectors, 64 % of the points evaluated, chi2 1.27x). The original arrays (t, f, e, idx, w, ...) stay
-    available for residuals and plots; model.chi2 uses t_eval and the statistics."""
+    available for residuals and plots; model.chi2 uses t_eval and the statistics.
+
+    model = (backend, p): a model of the event (its best fit). Every run is checked against it: where the binned
+    chi2 of the run differs from its exact chi2 by more than `tol`, the run is kept at full cadence. Without this
+    check an anomaly farther than K tE from t0 (a planetary caustic crossed at tau > 1) is binned with a straight
+    line through the caustic feature. `n_unbinned` counts the runs kept this way, `max_bin_error` is the largest
+    remaining per-run error at p."""
     binned = True
 
-    def __init__(self, data, t0, tE, K=1.0, gap=0.3):
+    def __init__(self, data, t0, tE, K=1.0, gap=0.3, model=None, tol=0.05):
         self.__dict__.update(data.__dict__)
         t, w, f, idx = data.t, data.w, data.f, data.idx
         keep = np.abs(t - t0) <= K * tE
-        bins = []
+        groups = []
         for j in range(data.nsets):
             sel = np.where((idx == j) & ~keep)[0]
             sel = sel[np.argsort(t[sel], kind="stable")]
             for g in (np.split(sel, np.where(np.diff(t[sel]) > gap)[0] + 1) if len(sel) else []):
                 if len(g) < 2:
                     keep[g] = True
-                    continue
-                W = w[g].sum()
-                tb = (w[g] * t[g]).sum() / W
-                tau = t[g] - tb
-                bins.append((j, tb, max(np.abs(tau).max(), 1e-3), W, (w[g] * f[g]).sum(), (w[g] * f[g] ** 2).sum(),
-                             (w[g] * tau * f[g]).sum(), (w[g] * tau ** 2).sum()))
-        B = np.array(bins).reshape(-1, 8)
+                else:
+                    groups.append(g)
+        self.n_unbinned, self.max_bin_error = 0, 0.0
+        if model is not None and groups:
+            err = self._errors(groups, model)
+            bad = np.abs(err) > tol
+            for g in [g for g, b in zip(groups, bad) if b]:
+                keep[g] = True
+            self.n_unbinned = int(bad.sum())
+            self.max_bin_error = float(np.max(np.abs(err[~bad]))) if (~bad).any() else 0.0
+            groups = [g for g, b in zip(groups, bad) if not b]
+        B = np.array([self._stats(g, t, w, f, idx) for g in groups]).reshape(-1, 8)
         kp = np.where(keep)[0]
         tt = np.r_[t[kp], B[:, 1] - B[:, 2], B[:, 1] + B[:, 2]]
         order = np.argsort(tt, kind="stable")                  # sorted: root warm starts along the trajectory
@@ -124,6 +135,37 @@ class Binned:
         self.b_h, self.b_set = B[:, 2].copy(), B[:, 0].astype(np.int64)
         self.b_W, self.b_Sf, self.b_Sff, self.b_Stf, self.b_Stt = (B[:, k].copy() for k in range(3, 8))
 
+    @staticmethod
+    def _stats(g, t, w, f, idx):
+        W = w[g].sum()
+        tb = (w[g] * t[g]).sum() / W
+        tau = t[g] - tb
+        return (idx[g[0]], tb, max(np.abs(tau).max(), 1e-3), W, (w[g] * f[g]).sum(), (w[g] * f[g] ** 2).sum(),
+                (w[g] * tau * f[g]).sum(), (w[g] * tau ** 2).sum())
 
-def bin_wings(data, t0, tE, K=1.0, gap=0.3):
-    return Binned(data, t0, tE, K, gap)
+    def _errors(self, groups, model):
+        """Binned minus exact chi2 of every run at the model (backend, p), with the fluxes of the exact fit."""
+        from . import model as M
+        backend, p = model
+        p = tuple(float(v) for v in np.asarray(p, float))
+        t, w, f, idx = self.t, self.w, self.f, self.idx
+        A = backend.lc(p, t)
+        fs, fb = M.fluxes(A, self)
+        S = np.array([self._stats(g, t, w, f, idx) for g in groups])
+        te = np.r_[S[:, 1] - S[:, 2], S[:, 1] + S[:, 2]]
+        o = np.argsort(te, kind="stable")
+        Ae = np.empty(len(te))
+        Ae[o] = backend.lc(p, te[o])
+        n = len(groups)
+        A0, A1 = 0.5 * (Ae[:n] + Ae[n:]), (Ae[n:] - Ae[:n]) / (2 * S[:, 2])
+        j = S[:, 0].astype(int)
+        c0, c1 = fs[j] * A0 + fb[j], fs[j] * A1
+        binned = S[:, 5] - 2 * c0 * S[:, 4] - 2 * c1 * S[:, 6] + c0 ** 2 * S[:, 3] + c1 ** 2 * S[:, 7]
+        exact = np.array([np.sum(w[g] * (f[g] - fs[idx[g]] * A[g] - fb[idx[g]]) ** 2) for g in groups])
+        return binned - exact
+
+
+def bin_wings(data, t0, tE, K=1.0, gap=0.3, model=None, tol=0.05):
+    """Speed option for maps: the wings binned per night (Binned). model = (backend, p) checks every run against
+    the model p and keeps runs that the linear-in-time model misrepresents (an anomaly beyond K tE)."""
+    return Binned(data, t0, tE, K, gap, model, tol)

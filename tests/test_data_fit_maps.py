@@ -400,3 +400,27 @@ def test_grid_knn_matches_brute_force():
             d = np.hypot((Kx - xs[i]) / (xs[1] - xs[0]), dy / (ys[1] - ys[0]))
             idx, dd = knn(i, j)
             assert np.allclose(dd, np.sort(d)[:12]) and np.allclose(d[idx], dd)
+
+
+def test_bin_wings_keeps_a_far_anomaly_unbinned():
+    """An anomaly farther than one tE from t0 (planetary caustic of a wide planet crossed at tau = 1.5) must not be
+    binned with a straight line through the night: with the best model given, bin_wings keeps that run at full
+    cadence and the binned chi2 agrees with the exact one."""
+    rng = np.random.default_rng(3)
+    be = F.make_backend(C.REFINE_BACKEND)
+    p = np.array([0.0, 0.02, 25.0, np.log10(2.0), np.log10(5e-3), np.pi, -2.8])   # trajectory along the axis
+    t_an = 1.5 * p[2]                                                              # caustic at s - 1/s = 1.5
+    nights = np.repeat(np.arange(-70, 70, 1.0), 3) + rng.uniform(0, 0.2, 420)       # 3 points per night
+    t = np.sort(np.r_[nights, t_an + np.arange(-1.5, 1.5, 0.05)])
+    A = be.lc(p, t)
+    wing = A[(np.abs(t - t_an) > 2.5) & (np.abs(t - t_an) < 5)].max()
+    assert A[np.abs(t - t_an) < 1.5].max() > 1.2 * wing                         # the anomaly is there
+    e = np.full(len(t), 10.0)
+    f = 1000.0 * A + 200.0 + rng.normal(0, e)
+    d = D.Data(t, f, e, np.zeros(len(t), np.int64), ["T"])
+    exact = M.chi2(be, p, d)
+    naive = D.bin_wings(d, p[0], p[2])                                   # anomaly night binned (the bug)
+    checked = D.bin_wings(d, p[0], p[2], model=(be, p))
+    assert abs(M.chi2(be, p, naive) - exact) > 1.0
+    assert checked.n_unbinned >= 1 and abs(M.chi2(be, p, checked) - exact) < 0.1
+    assert len(checked.t_eval) < len(t)                                  # the other nights are still binned

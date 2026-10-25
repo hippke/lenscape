@@ -128,7 +128,11 @@ def _prepare(data, cfg, best, bin_wings):
                                               logrho=float(best[6]))
     else:
         cfg["seed"] = cfg.get("seed") or F.seed_from_data(data)
-    fitdata = D.bin_wings(data, best[0], best[2]) if (bin_wings and best is not None) else data
+    if bin_wings and best is not None:
+        # runs that a linear model within a night misrepresents at the best fit (an anomaly beyond one tE) stay unbinned
+        fitdata = D.bin_wings(data, best[0], best[2], model=(F.make_backend(cfg["grid_backend"]), best))
+    else:
+        fitdata = data
     G._DATA = fitdata
     return cfg, fitdata
 
@@ -147,7 +151,9 @@ def lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=BANDS, se
     seed = seed_grid if min(len(logs), len(logq)) >= 2 * seed_grid else 0
     ST = G.Stages(5 if seed else 4, log)
     log(f"lattice {len(logs)} x {len(logq)} = {len(logs) * len(logq)} points; N = {len(data.t)}"
-        + (f" ({len(fitdata.t_eval)} evaluated after binning the wings)" if hasattr(fitdata, "t_eval") else ""))
+        + (f" ({len(fitdata.t_eval)} evaluated after binning the wings"
+           + (f"; {fitdata.n_unbinned} runs kept unbinned" if fitdata.n_unbinned else "") + ")"
+           if hasattr(fitdata, "t_eval") else ""))
     t0 = time.time()
     B = amr.run_contour((logs[0] - dls / 2, logs[-1] + dls / 2), (logq[0] - dlq / 2, logq[-1] + dlq / 2),
                         (len(logs), len(logq)), 0, cfg, fitdata, np.asarray(bands, float), workers=workers, seed=seed,

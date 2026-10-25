@@ -59,10 +59,13 @@ are magnitudes and are converted with flux = 10^(−0.4 (mag − zp)). Combine s
 ### `rescale(fe, emag, k, smin)`
 Error rescaling of Yee et al. (2012): σ′ = k √(σ² + σ_min²) in magnitudes, applied to the flux errors `fe`.
 
-### `bin_wings(data, t0, tE, K=1.0, gap=0.3)`
+### `bin_wings(data, t0, tE, K=1.0, gap=0.3, model=None, tol=0.05)`
 Speed option for maps: points with |t − t0| > K tE are grouped per night (runs without gaps > `gap` days) and
-replaced by their sufficient statistics. χ² stays exact for a model that is linear in time within a night. Used by
-`maps.lattice` and `maps.refine` when `best` is given (`bin_wings=True`).
+replaced by their sufficient statistics. χ² stays exact for a model that is linear in time within a night. With
+`model = (backend, p)` every run is checked against the model `p` (the best fit): a run whose binned χ² differs
+from its exact χ² by more than `tol` is kept at full cadence, so an anomaly farther than K tE from t0 (a planetary
+caustic crossed at τ > 1) is never binned through. The result reports `n_unbinned` and `max_bin_error`. The map
+functions pass their `best` as the model (`bin_wings=True`).
 
 ---
 
