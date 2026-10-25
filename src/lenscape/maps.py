@@ -238,6 +238,9 @@ def lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=BANDS, se
             near = near[np.argsort(B["chi2"][near])][:3]
             starts = [B["x"][k].copy() for k in near if np.all(np.isfinite(B["x"][k][:5]))]
             tasks[(i, j)] = (float(ls), float(lq), starts, cfg, None, np.inf, False, c_cut)
+    # lowest cell chi2 first: fits near the minimum take longest, and a long task at the end idles the other workers
+    tasks = dict(sorted(tasks.items(), key=lambda kv: min([B["chi2"][k] for k in np.where(
+        (np.abs(B["logs"] - kv[1][0]) <= 1.5 * dls) & (np.abs(B["logq"] - kv[1][1]) <= 1.5 * dlq))[0]] or [np.inf])))
     G.warmup(cfg, fitdata)
     res, _ = G.run_isolated(_point_from_starts, tasks, workers, log=log, desc="lattice point fits")
     chi = np.full((len(logs), len(logq)), np.nan)
@@ -343,6 +346,7 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
                 smooth = bool(band(dc[0]) == band(dc[-1]) and np.log10(dc[-1] + 1e-3) - np.log10(dc[0] + 1e-3) < 0.1)
             tasks[(i, j)] = (float(ls), float(lq), [np.asarray(known[k][3], float) for k in near], cfg,
                              ip[0] if ip else None, ip[1] if ip else np.inf, smooth, c_cut)
+    tasks = dict(sorted(tasks.items(), key=lambda kv: kv[1][5]))      # lowest reference chi2 first (see lattice)
     G.warmup(cfg, fitdata)
     res, _ = G.run_isolated(_point_from_starts, tasks, workers, log=log, desc="lattice point fits")
     chi = np.full((len(logs), len(logq)), np.nan)
