@@ -8,6 +8,7 @@ then reported with its exit signal.
 """
 import warnings
 import os, time, pickle
+from collections import deque
 import numpy as np
 import multiprocessing as mp
 from multiprocessing.connection import wait
@@ -73,12 +74,12 @@ def run_isolated(fn, tasks, workers=19, retries=1, log=print, desc=None):
     desc: label of the progress bar (see progress_bar)."""
     ctx = mp.get_context("fork")
     bar = progress_bar(len(tasks), desc or fn.__name__.strip("_"))
-    pending = list(tasks.items())
+    pending = deque(tasks.items())
     tries = {k: 0 for k in tasks}
     running, results, crashes = {}, {}, {}
     while pending or running:
         while pending and len(running) < workers:
-            k, args = pending.pop(0)
+            k, args = pending.popleft()
             r, w = ctx.Pipe(duplex=False)
             p = ctx.Process(target=_child, args=(w, fn, args))
             p.start()
