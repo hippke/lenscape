@@ -22,6 +22,7 @@ DEFAULT = dict(
     optimizer="nm_lm",             # local fits: short Nelder-Mead, then Levenberg-Marquardt ("nm": Nelder-Mead only)
     heavy_optimizer="nm",          # deep search of outliers: Nelder-Mead refinements ("nm_lm": 2.4x cheaper, 1 of 256 points 4.6 worse)
     adaptive=False,                # densify: accept one chi2 at the interpolated start where the surroundings agree (no gain measured)
+    lm_jac="fd",                   # LM Jacobian: forward differences, or "analytic" (point-source gradient; slower on caustic-rich data)
     lm_tol=0.03,                   # Levenberg-Marquardt stops when a step gains less than this in chi2 (noise ~0.07)
     nm_fatol=1e-2,                 # Nelder-Mead fatol of the local fits
     bin_K=1.0,                     # maps: nights beyond bin_K tE from t0 are binned (each checked against the best model)

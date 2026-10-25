@@ -69,7 +69,8 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=
                 if settled(c):
                     return best
         fr = lambda y: M.chi2_residuals(be, np.asarray(F.full_p(co.to_x(y), ls, lq), float), G._DATA)
-        q = least_squares_lm(fr, y, F.LM_STEP, F.LM_CAP, tol=cfg.get("lm_tol", 1e-3))
+        jac = F.lm_jacobian(be, G._DATA, ls, lq, co) if cfg.get("lm_jac", "fd") == "analytic" else None
+        q = least_squares_lm(fr, y, F.LM_STEP, F.LM_CAP, tol=cfg.get("lm_tol", 1e-3), jac=jac)
         c = fx(q.x)
         if np.isfinite(c) and c < best[0]:
             best = (c, co.to_x(q.x))

@@ -575,6 +575,72 @@ def lc_full(ls, lq, u0, alpha, lr, tE, t0, t, tol, hexeps, ctol, ld=0.0):
 
 
 @njit(cache=True, error_model='numpy', fastmath=FM)
+def lc_full_grad(ls, lq, u0, alpha, lr, tE, t0, t, tol, hexeps, ctol, ld=0.0):
+    """lc_full plus the source-plane gradient of the point-source magnification at every point (nbmag._point_grad)
+    and the finite-source correction A - A0. Returns (A, gy1, gy2, corr, flag). For point-source points (flag 0)
+    the gradient is exact; for quadrupole/hexadecapole points (flag 1) the gradient of A0 approximates that of A
+    and corr gives dA/drho ~ 2 corr / rho; contour points (flag 3, or 2 if failed) need finite differences."""
+    s = 10.0 ** ls
+    q = 10.0 ** lq
+    rho = 10.0 ** lr
+    a, m1, m2 = nbmag._setup(s, q)
+    sa, ca = np.sin(alpha), np.cos(alpha)
+    n = t.shape[0]
+    A = np.empty(n)
+    gy1 = np.empty(n)
+    gy2 = np.empty(n)
+    corr = np.zeros(n)
+    flag = np.zeros(n, np.int8)
+    c = np.empty(6, np.complex128)
+    z = np.empty(5, np.complex128)
+    zs = np.empty(5, np.complex128)
+    imgs = np.empty(5, np.complex128)
+    work = np.empty(5, np.complex128)
+    par = np.empty(5)
+    zp = np.empty(5, np.complex128)
+    zpp = np.empty(5, np.complex128)
+    zk1 = np.empty(5, np.complex128)
+    nbmag._init_roots(z, s)
+    y2m1 = y2m2 = y2m3 = 0.0
+    for k in range(n):
+        tn = (t[k] - t0) / tE
+        y1 = u0 * sa - tn * ca
+        y2 = -u0 * ca - tn * sa
+        for i in range(5):
+            zk1[i] = z[i]
+        if EXTRAPOLATE and k >= 2 and y2 * y2m1 > 0.0 and y2m1 * y2m2 > 0.0:
+            dt0 = t[k - 1] - t[k - 2]
+            dt1 = t[k] - t[k - 1]
+            if dt0 > 0.0 and dt1 <= 3.0 * dt0:
+                if EXTRAPOLATE == 2 and k >= 3 and y2m2 * y2m3 > 0.0 and t[k - 2] - t[k - 3] > 0.0 \
+                        and dt1 <= 3.0 * (t[k - 2] - t[k - 3]):
+                    x0, x1, x2, x = t[k - 3], t[k - 2], t[k - 1], t[k]
+                    l0 = (x - x1) * (x - x2) / ((x0 - x1) * (x0 - x2))
+                    l1 = (x - x0) * (x - x2) / ((x1 - x0) * (x1 - x2))
+                    l2 = (x - x0) * (x - x1) / ((x2 - x0) * (x2 - x1))
+                    for i in range(5):
+                        z[i] = l0 * zpp[i] + l1 * zp[i] + l2 * z[i]
+                else:
+                    r = dt1 / dt0
+                    for i in range(5):
+                        z[i] = z[i] + r * (z[i] - zp[i])
+        A[k], flag[k] = nbmag._one(a, m1, m2, s, q, rho, y1, y2, c, z, zs, tol, hexeps, imgs, par, work, ld)
+        m0, g1, g2 = nbmag._point_grad(a, m1, m2, y1, y2, z)
+        gy1[k], gy2[k] = g1, g2
+        if flag[k] == 2:
+            Ak, st, _ = mag_disk_ld(s, q, y1, y2, rho, ctol, ld, 8, 2048, z)
+            if st >= 0:
+                A[k], flag[k] = Ak, 3
+        if flag[k] != 0:
+            corr[k] = A[k] - m0
+        for i in range(5):
+            zpp[i] = zp[i]
+            zp[i] = zk1[i]
+        y2m3, y2m2, y2m1 = y2m2, y2m1, y2
+    return A, gy1, gy2, corr, flag
+
+
+@njit(cache=True, error_model='numpy', fastmath=FM)
 def mags_full(s_arr, q_arr, y1_arr, y2_arr, rho_arr, tol, hexeps, ctol, ld=0.0):
     n = s_arr.shape[0]
     A = np.empty(n)

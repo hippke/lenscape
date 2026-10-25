@@ -246,6 +246,52 @@ def _point(a, m1, m2, s, q, y1, y2, c, z, need_test):
 
 
 @njit(cache=True, error_model='numpy', fastmath=FM)
+def _point_grad(a, m1, m2, y1, y2, z):
+    """Point-source magnification and its source-plane gradient at the images z (already solved for (y1, |y2|) by
+    _point): (A0, dA0/dy1, dA0/dy2). Per image, with g'(zbar) = -conj(J1), g''(zbar) = -conj(J2) of the lens equation
+    zeta = z - g(zbar): d mu = 2 mu^3 Re[conj(g') g'' (d zetabar + conj(g') d zeta)], mu = 1/det J signed, so
+    dmu/dy1 = 2 mu^3 Re[J1 J2* (1 - J1)] and dmu/dy2 = 2 mu^3 Im[J1 J2* (1 + J1)]; A = sum |mu| adds sign(det J)
+    times these. The images are selected as in _point (the two worst roots dropped when they are ghosts)."""
+    y = complex(y1, abs(y2)) + a * m1
+    w1 = w2 = w3 = -1
+    g1 = g2 = g3 = -1.0
+    for i in range(5):
+        zz = z[i]
+        zc = zz.conjugate()
+        g = _cabs2((y - zz) + m1 * _cinv(zc - a) + m2 * _cinv(zc))
+        if g > g1:
+            w3, g3, w2, g2, w1, g1 = w2, g2, w1, g1, i, g
+        elif g > g2:
+            w3, g3, w2, g2 = w2, g2, i, g
+        elif g > g3:
+            w3, g3 = i, g
+    three = np.sqrt(g2) * DLMIN > np.sqrt(g3) + 1e-12
+    gy1 = 0.0
+    gy2 = 0.0
+    mag0 = 0.0
+    for i in range(5):
+        if three and (i == w1 or i == w2):
+            continue
+        zz = z[i]
+        ia = _cinv(zz - a)
+        ib = _cinv(zz)
+        ia2 = ia * ia
+        ib2 = ib * ib
+        J1 = m1 * ia2 + m2 * ib2
+        J2 = -2.0 * (m1 * ia2 * ia + m2 * ib2 * ib)
+        dJ = 1.0 - (J1 * J1.conjugate()).real
+        mu = 1.0 / dJ
+        w = J1 * J2.conjugate()
+        sg = 1.0 if dJ > 0 else -1.0
+        mag0 += sg * mu
+        gy1 += sg * 2.0 * mu * mu * mu * (w * (1.0 - J1)).real
+        gy2 += sg * 2.0 * mu * mu * mu * (w * (1.0 + J1)).imag
+    if y2 < 0:                                   # _point works at |y2|
+        gy2 = -gy2
+    return mag0, gy1, gy2
+
+
+@njit(cache=True, error_model='numpy', fastmath=FM)
 def _true_images(a, m1, m2, y, z, imgs, par):
     """Select the true images among the 5 roots z (same rule as _point); fill imgs/par (sign of det J). Returns n."""
     w1 = w2 = w3 = -1

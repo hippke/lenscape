@@ -234,6 +234,87 @@ def resid_profiled_binned(A, kpos, kf, kw, kidx, bm, bp, bh, bset, W, Sf, Sff, S
     return out
 
 
+@njit(cache=True, error_model='numpy')
+def _fluxes_binned(A, kpos, kf, kw, kidx, bm, bp, bh, bset, W, Sf, Stf, Stt, nsets):
+    """fs, fb per data set for data.Binned (the flux solve of chi2_profiled_binned)."""
+    S = np.zeros(nsets)
+    Sa = np.zeros(nsets)
+    Saa = np.zeros(nsets)
+    Sfv = np.zeros(nsets)
+    Saf = np.zeros(nsets)
+    for k in range(kpos.shape[0]):
+        j, wk, ak = kidx[k], kw[k], A[kpos[k]]
+        S[j] += wk
+        Sa[j] += wk * ak
+        Saa[j] += wk * ak * ak
+        Sfv[j] += wk * kf[k]
+        Saf[j] += wk * ak * kf[k]
+    for b in range(bm.shape[0]):
+        am, ap = A[bm[b]], A[bp[b]]
+        A0 = 0.5 * (am + ap)
+        A1 = (ap - am) / (2.0 * bh[b])
+        j = bset[b]
+        S[j] += W[b]
+        Sa[j] += W[b] * A0
+        Saa[j] += W[b] * A0 * A0 + A1 * A1 * Stt[b]
+        Sfv[j] += Sf[b]
+        Saf[j] += A0 * Sf[b] + A1 * Stf[b]
+    fs = np.empty(nsets)
+    fb = np.empty(nsets)
+    for j in range(nsets):
+        det = S[j] * Saa[j] - Sa[j] ** 2
+        fs[j] = (S[j] * Saf[j] - Sa[j] * Sfv[j]) / det
+        fb[j] = (Saa[j] * Sfv[j] - Sa[j] * Saf[j]) / det
+    return fs, fb
+
+
+def residual_jacobian(backend, p, data, dA_of_y, t_eval):
+    """Residual vector (as chi2_residuals) and its Jacobian with respect to the fit coordinates for the model
+    vector p, from dA_of_y(A, flag, grads) -> dA (n_eval, n_par): the derivative of the magnification at every
+    evaluated time. Variable projection in Kaufman's form: J = -P (fs sqrt(w) dA / dy), where P projects, per data
+    set, onto the complement of the flux design columns (d r / d fs, d r / d fb); the second Golub-Pereyra term is
+    dropped. Returns (r, J)."""
+    pc, out = clamp(p)
+    A, gy1, gy2, corr, flag = backend.lc_grad(pc, t_eval)
+    dA = dA_of_y(A, flag, gy1, gy2, corr, pc)
+    if getattr(data, "binned", False):
+        d = data
+        r = resid_profiled_binned(A, d.k_pos, d.k_f, d.k_w, d.k_idx, d.b_m, d.b_p, d.b_h, d.b_set, d.b_W, d.b_Sf,
+                                  d.b_Sff, d.b_Stf, d.b_Stt, d.nsets)
+        fs, fb = _fluxes_binned(A, d.k_pos, d.k_f, d.k_w, d.k_idx, d.b_m, d.b_p, d.b_h, d.b_set, d.b_W, d.b_Sf,
+                                d.b_Stf, d.b_Stt, d.nsets)
+        nk, nb = len(d.k_pos), len(d.b_m)
+        m = nk + 2 * nb
+        J = np.zeros((m + 1, dA.shape[1]))
+        sw = np.sqrt(d.k_w)
+        J[:nk] = -(fs[d.k_idx] * sw)[:, None] * dA[d.k_pos]
+        A0 = 0.5 * (A[d.b_m] + A[d.b_p])
+        A1 = (A[d.b_p] - A[d.b_m]) / (2.0 * d.b_h)
+        sW, sT = np.sqrt(d.b_W), np.sqrt(np.maximum(d.b_Stt, 0.0))
+        J[nk:m:2] = (sW * fs[d.b_set])[:, None] * 0.5 * (dA[d.b_m] + dA[d.b_p])
+        J[nk + 1:m:2] = (sT * fs[d.b_set])[:, None] * (dA[d.b_p] - dA[d.b_m]) / (2.0 * d.b_h)[:, None]
+        # flux design columns (d r / d fs, d r / d fb) and data-set index per residual row
+        phi_s = np.r_[sw * A[d.k_pos], np.ravel(np.c_[sW * A0, sT * A1])]
+        phi_b = np.r_[sw, np.ravel(np.c_[sW, np.zeros(nb)])]
+        sets = np.r_[d.k_idx, np.repeat(d.b_set, 2)]
+    else:
+        r = resid_profiled(A, data.f, data.w, data.idx, data.nsets)
+        fs, fb = fluxes(A, data)
+        m = len(A)
+        J = np.zeros((m + 1, dA.shape[1]))
+        sw = np.sqrt(data.w)
+        J[:m] = -(fs[data.idx] * sw)[:, None] * dA
+        phi_s, phi_b, sets = sw * A, sw, data.idx
+    for k in range(data.nsets):                                   # project out the flux directions per data set
+        rows = np.nonzero(sets == k)[0]
+        Phi = np.c_[phi_s[rows], phi_b[rows]]
+        G = Phi.T @ Phi
+        coef = np.linalg.solve(G, Phi.T @ J[rows])
+        J[rows] -= Phi @ coef
+    r[-1] = 100.0 * math.sqrt(out)
+    return r, J
+
+
 def chi2_residuals(backend, p, data):
     """Residual vector whose sum of squares is model.chi2(backend, p, data) up to a constant (binned data); the last
     element carries the box penalty. For least-squares optimisers (fit._lm)."""
@@ -285,6 +366,16 @@ class NumbaHybrid:
             y1, y2 = u0 * np.sin(al) - tn * np.cos(al), -u0 * np.cos(al) - tn * np.sin(al)
             A = self._repair(A, flag, np.full(n, 10.0 ** ls), np.full(n, 10.0 ** lq), y1, y2, np.full(n, 10.0 ** lr))
         return A
+
+    def lc_grad(self, p, t):
+        """A(t) with the source-plane gradient of its point-source part and the finite-source correction:
+        (A, dA0/dy1, dA0/dy2, A - A0, flag); see contour.lc_full_grad. Contour points that failed (flag 2) keep the
+        repaired value of lc()."""
+        t0, u0, tE, ls, lq, al, lr = p
+        A, gy1, gy2, corr, flag = self.ct.lc_full_grad(ls, lq, u0, al, lr, tE, t0, t, self.tol, self.hexeps, self.ctol, self.ld)
+        if (flag == 2).any():
+            A = self.lc(p, t)
+        return A, gy1, gy2, corr, flag
 
     def mag(self, s, q, y1, y2, rho):
         A, flag = self.ct.mags_full(s, q, y1, y2, rho, self.tol, self.hexeps, self.ctol, self.ld)

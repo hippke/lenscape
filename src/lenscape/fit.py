@@ -215,7 +215,56 @@ LM_STEP = np.array([1e-4, 1e-5, 1e-4, 1e-4, 1e-3])
 LM_CAP = np.array([0.3, 0.05, 0.1, 0.05, 0.2])
 
 
-def nm_then_lm(f, fr, y0, sim, n_explore, h=LM_STEP, cap=LM_CAP, lm_tol=1e-3, fatol=1e-2):
+def lm_jacobian(be, data, ls, lq, co, h=LM_STEP):
+    """jac(y) -> (r, J) for least_squares_lm in the t_eff coordinates at fixed (log s, log q): analytic derivatives
+    of the magnification through the source position (nbmag._point_grad; exact at point-source points, the
+    point-source gradient and dA/drho = 2 (A - A0)/rho at quadrupole/hexadecapole points) and forward differences
+    with steps h at the contour points only (a few per cent of the points, but they cannot be differentiated
+    analytically). Fluxes are held fixed in the Jacobian (Kaufman). Only for the 'teff' coordinates."""
+    t_eval = getattr(data, "t_eval", data.t)
+    ln10 = np.log(10.0)
+
+    def dA_of_y(A, flag, gy1, gy2, corr, pc):
+        t0, u0, tE, _, _, al, lr = pc
+        rho = 10.0 ** lr
+        sa, ca = np.sin(al), np.cos(al)
+        tau = (t_eval - t0) / tE
+        y1 = u0 * sa - tau * ca
+        y2 = -u0 * ca - tau * sa
+        g_t = gy1 * ca + gy2 * sa                       # dA/dt0 * tE = dA/dtE * tE / tau
+        dA_t0 = g_t / tE
+        dA_u0 = gy1 * sa - gy2 * ca
+        dA_tE = g_t * tau / tE
+        dA_al = -gy1 * y2 + gy2 * y1
+        dA_rho = np.where(flag == 1, 2.0 * corr / rho, 0.0)
+        dA = np.empty((len(A), 5))
+        dA[:, 0] = dA_t0
+        dA[:, 1] = dA_u0 / tE
+        dA[:, 2] = dA_tE * tE - dA_u0 * u0 - dA_rho * rho
+        dA[:, 3] = dA_al
+        dA[:, 4] = dA_rho * rho * ln10
+        # contour points: forward differences in the fit coordinates with noise-aware steps (100 x the LM steps,
+        # which lie below the integration noise of these points, whose derivatives are the largest of the curve)
+        fd = np.nonzero(flag >= 2)[0]
+        if len(fd):
+            y = co.from_x(np.array([t0, u0, tE, al, lr]))
+            ts = t_eval[fd]
+            A0 = A[fd]
+            for k in range(5):
+                hk = 100.0 * h[k]
+                yk = y.copy()
+                yk[k] += hk
+                pk, _ = model.clamp(full_p(co.to_x(yk), ls, lq))
+                dA[fd, k] = (be.lc(pk, ts) - A0) / hk
+        return dA
+
+    def jac(y):
+        p = np.asarray(full_p(co.to_x(y), ls, lq), float)
+        return model.residual_jacobian(be, p, data, dA_of_y, t_eval)
+    return jac
+
+
+def nm_then_lm(f, fr, y0, sim, n_explore, h=LM_STEP, cap=LM_CAP, lm_tol=1e-3, fatol=1e-2, jac=None):
     """A short Nelder-Mead exploration from y0 (initial simplex sim, or the default simplex if None; n_explore
     evaluations, stopping at fatol) to reach the right valley, then Levenberg-Marquardt on the residual vector fr
     to converge (from distant starts LM alone stops in a nearer minimum; it stops when a step gains less than
@@ -224,7 +273,7 @@ def nm_then_lm(f, fr, y0, sim, n_explore, h=LM_STEP, cap=LM_CAP, lm_tol=1e-3, fa
     if sim is not None:
         opts["initial_simplex"] = sim
     r = minimize(f, y0, method="Nelder-Mead", options=opts)
-    q = least_squares_lm(fr, r.x, h, cap, tol=lm_tol)
+    q = least_squares_lm(fr, r.x, h, cap, tol=lm_tol, jac=jac)
     if q.fun < r.fun or not np.isfinite(r.fun):
         c = f(q.x)                      # chi2 itself (binned data: the residuals' sum of squares omits a constant)
         if c < r.fun:
@@ -248,8 +297,9 @@ def local_fit(be, data, ls, lq, y0, cfg, step, maxfev):
         return r.fun, r.x
     fr = lambda y: model.chi2_residuals(be, np.asarray(full_p(co.to_x(y), ls, lq), float), data)
     sim = None if step is None else np.vstack([y0] + [y0 + np.eye(5)[k] * st for k, st in enumerate(co.steps(y0, step))])
+    jac = lm_jacobian(be, data, ls, lq, co) if cfg.get("lm_jac", "fd") == "analytic" else None
     return nm_then_lm(f, fr, y0, sim, min(maxfev, cfg.get("explore_nfev", 100)), lm_tol=cfg.get("lm_tol", 1e-3),
-                      fatol=fatol)
+                      fatol=fatol, jac=jac)
 
 
 def _to_refine(trials, cfg):

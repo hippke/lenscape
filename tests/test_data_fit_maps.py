@@ -448,3 +448,30 @@ def test_bin_wings_keeps_a_far_anomaly_unbinned():
     assert abs(M.chi2(be, p, naive) - exact) > 1.0
     assert checked.n_unbinned >= 1 and abs(M.chi2(be, p, checked) - exact) < 0.1
     assert len(checked.t_eval) < len(t)                                  # the other nights are still binned
+
+
+def test_analytic_lm_jacobian_matches_fd_and_converges():
+    """fit.lm_jacobian: residual vector identical to chi2_residuals, columns aligned with central differences
+    (Kaufman's projected Jacobian differs by the dropped Golub-Pereyra term, ~10 % here), and Levenberg-Marquardt
+    with it reaches the same minimum as with forward differences from a nearby start, in fewer evaluations."""
+    from lenscape.optimize import least_squares_lm
+    d = synthetic(n=250)
+    be = F.make_backend(C.GRID_BACKEND)
+    co = F.Coords("teff")
+    ls, lq = TRUE[3], TRUE[4]
+    jac = F.lm_jacobian(be, d, ls, lq, co)
+    fr = lambda y: M.chi2_residuals(be, np.asarray(F.full_p(co.to_x(y), ls, lq), float), d)
+    y = co.from_x(np.r_[TRUE[:3], TRUE[5:]] + np.array([0.1, 0.003, 0.3, 0.01, 0.03]))
+    r, J = jac(y)
+    assert np.array_equal(r, fr(y))
+    hs = np.array([1e-3, 1e-3, 1e-3, 1e-3, 1e-2])
+    for k in range(5):
+        yp, ym = y.copy(), y.copy()
+        yp[k] += hs[k]
+        ym[k] -= hs[k]
+        jfd = (fr(yp) - fr(ym)) / (2 * hs[k])
+        assert J[:, k] @ jfd / (np.linalg.norm(J[:, k]) * np.linalg.norm(jfd)) > 0.9
+    f = lambda y: M.chi2(be, F.full_p(co.to_x(y), ls, lq), d)
+    q_fd = least_squares_lm(fr, y, F.LM_STEP, F.LM_CAP, tol=0.03)
+    q_an = least_squares_lm(fr, y, F.LM_STEP, F.LM_CAP, tol=0.03, jac=jac)
+    assert abs(f(q_an.x) - f(q_fd.x)) < 1.0 and q_an.nfev < q_fd.nfev

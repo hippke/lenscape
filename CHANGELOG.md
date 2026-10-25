@@ -49,6 +49,10 @@ First public version.
   coarse lattice must resolve the valleys).
 - `alpha_profile` stage 1 options `profile_interp` and `profile_dedupe` (gated LM start and start deduplication as
   in `densify`): 1.4× less CPU on a profile densified from a coarser one, with ~8 % more points worse by > 1, so off.
+- `cfg["lm_jac"]="analytic"` (option): analytic point-source gradient for the Levenberg–Marquardt Jacobian
+  (`nbmag._point_grad`, `contour.lc_full_grad`, `model.residual_jacobian`, `fit.lm_jacobian`); fewer evaluations
+  per fit, but slower on caustic-crossing data where the finite-source points dominate, so the default stays
+  forward differences.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.
