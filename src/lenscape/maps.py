@@ -35,15 +35,20 @@ def _same_start(y, z):
             and abs(y[2] - z[2]) < 0.02 and da < 0.02 and abs(y[4] - z[4]) < 0.05)
 
 
-def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf):
+def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=False):
     """Lattice point (s, q fixed) from the given start vectors (t0, u0, tE, alpha, log rho, ...).
-    lm_start: a start interpolated from the known solutions around the point, fitted by Levenberg-Marquardt alone
-    (~20 light curves); c_ref: the interpolation of those solutions' chi2. When the result lies within
-    cfg["lm_gate"] (default 1.0) of c_ref and beats every other start's own chi2, it is the answer (MOA-2022-BLG-091,
-    2x -> 4x: the interpolated start is a median 0.06 above the solution, the nearest known solution 44); otherwise
-    the starts are fitted, each a short Nelder-Mead and Levenberg-Marquardt (fit.local_fit), in the order of their
-    chi2 at the point, skipping a start that lies in the basin of one already fitted (cfg["dedupe"], default on: the
-    nearest known solutions of a converged coarse map are usually one and the same solution)."""
+    lm_start: a start interpolated from the known solutions around the point; c_ref: the interpolation of those
+    solutions' chi2; smooth: those solutions agree (same Delta chi2 band, spread < 0.1 dex). Steps, each taken only
+    if the previous one did not settle the point (a result settles it when it lies within cfg["lm_gate"], default
+    1.0, of c_ref and beats every other start's own chi2):
+      1. smooth and cfg["adaptive"] (off in config.DEFAULT: measured no gain, the refinement then repairs the
+         slightly worse values): one light curve at the interpolated start (its chi2 is a true profile value at the
+         point, an upper bound of the minimum);
+      2. Levenberg-Marquardt alone from the interpolated start (~20 light curves; MOA-2022-BLG-091, 2x -> 4x: this
+         start is a median 0.06 above the solution, the nearest known solution 44);
+      3. the starts, each a short Nelder-Mead and Levenberg-Marquardt (fit.local_fit), in the order of their chi2
+         at the point, skipping a start in the basin of one already fitted (cfg["dedupe"], default on: the nearest
+         known solutions of a converged coarse map are usually one and the same solution)."""
     be = F.make_backend(cfg["grid_backend"])
     co = F.Coords(cfg.get("coords", "teff"))
     fx = lambda y: M.chi2(be, F.full_p(co.to_x(y), ls, lq), G._DATA)
@@ -53,14 +58,21 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf):
         y = co.from_x(np.asarray(x0[:5], float))
         pre.append((fx(y), y))
     gate = cfg.get("lm_gate", 1.0)
+    settled = lambda c: gate is not None and c < c_ref + gate and all(c < c0 for c0, _ in pre)
     if lm_start is not None and co.kind == "teff":
         y = co.from_x(np.asarray(lm_start, float))
+        if smooth and cfg.get("adaptive", True):
+            c = fx(y)
+            if np.isfinite(c):
+                best = (c, np.asarray(lm_start, float))
+                if settled(c):
+                    return best
         fr = lambda y: M.chi2_residuals(be, np.asarray(F.full_p(co.to_x(y), ls, lq), float), G._DATA)
         q = least_squares_lm(fr, y, F.LM_STEP, F.LM_CAP, tol=cfg.get("lm_tol", 1e-3))
         c = fx(q.x)
-        if np.isfinite(c):
+        if np.isfinite(c) and c < best[0]:
             best = (c, co.to_x(q.x))
-            if gate is not None and c < c_ref + gate and all(c < c0 for c0, _ in pre):
+            if settled(c):
                 return best
     done = []                                        # starts and results already explored (fit coordinates)
     for c, y in sorted(pre, key=lambda v: v[0]):
@@ -129,8 +141,9 @@ def _grid_knn(Kx, Ky, xs, ys, m, period_y=None):
 
 def _interp_start(known, dist, tie=0.05, max_dist=1.5):
     """dist: (indices, distances) of the nearest known solutions (from _grid_knn). Mean (in fit coordinates, alpha
-    unwrapped) of the equally nearest known solutions and the mean of their chi2: on a lattice refined by 2, the
-    bilinear interpolation at a cell centre (4 corners) or edge midpoint (2 ends), the point itself if known.
+    unwrapped) of the equally nearest known solutions, the mean of their chi2 and their chi2 values: on a lattice
+    refined by 2, the bilinear interpolation at a cell centre (4 corners) or edge midpoint (2 ends), the point
+    itself if known.
     None if they are farther than max_dist (new-lattice steps), differ in the sign of u0 or spread in alpha > 0.3."""
     idx, d = dist                                  # nearest known solutions and their distances, sorted
     k = idx[d <= d[0] + tie][:8]
@@ -144,7 +157,8 @@ def _interp_start(known, dist, tie=0.05, max_dist=1.5):
     Y[:, 3] = Y[0, 3] + (Y[:, 3] - Y[0, 3] + np.pi) % (2 * np.pi) - np.pi
     if np.ptp(Y[:, 3]) > 0.3:
         return None
-    return co.to_x(Y.mean(0)), float(np.mean([known[m][2] for m in k]))
+    c = np.array([known[m][2] for m in k])
+    return co.to_x(Y.mean(0)), float(c.mean()), c
 
 
 def _prepare(data, cfg, best, bin_wings):
@@ -268,6 +282,8 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
     cfg, fitdata = _prepare(data, cfg, best, bin_wings)
     interp = bool(cfg.get("interp_start", True))
     known = _known_solutions(previous)
+    ref0 = min(c for _, _, c, _ in known)
+    band = lambda dc: int(np.searchsorted(np.asarray(BANDS, float), dc))
     K = np.array([(a, b) for a, b, _, _ in known])
     # distances in units of the new lattice step, so that s and q count alike
     ds, dq = abs(logs[1] - logs[0]), abs(logq[1] - logq[0])
@@ -286,8 +302,12 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
             # then the best chi2 among the close ones
             near = [near[0]] + sorted(near[1:], key=lambda k: (dist[k] > 2.0, known[k][2]))[:n_starts - 1]
             ip = _interp_start(known, (nn, dn)) if interp else None
+            smooth = False
+            if ip is not None:                       # the surrounding solutions agree: same band, spread < 0.1 dex
+                dc = np.sort(ip[2]) - ref0
+                smooth = bool(band(dc[0]) == band(dc[-1]) and np.log10(dc[-1] + 1e-3) - np.log10(dc[0] + 1e-3) < 0.1)
             tasks[(i, j)] = (float(ls), float(lq), [np.asarray(known[k][3], float) for k in near], cfg,
-                             ip[0] if ip else None, ip[1] if ip else np.inf)
+                             ip[0] if ip else None, ip[1] if ip else np.inf, smooth)
     G.warmup(cfg, fitdata)
     res, _ = G.run_isolated(_point_from_starts, tasks, workers, log=log, desc="lattice point fits")
     chi = np.full((len(logs), len(logq)), np.nan)
