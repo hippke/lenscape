@@ -323,8 +323,9 @@ See `notebooks/han2025.py` for a complete example.
   contour integration (uniform disk; linear limb darkening).
 - `contour.mags_full(s, q, y1, y2, rho, tol, hexeps, ctol, ld=0.0)` — magnifications for arrays of samples.
 - `nbmag.mags_point(s, q, y1, y2)` — point-source magnifications for arrays.
-- `grid.run_isolated(fn, tasks, workers)` — run `fn(*args)` for each task in its own forked process (a crashing
-  task returns `None` instead of stopping the run).
+- `grid.run_isolated(fn, tasks, workers)` — run `fn(*args)` for each task in forked worker processes (`grid.Pool`:
+  the workers are forked once per call and each runs many tasks; a crashing task is retried once in a fresh worker
+  and then returns `None` instead of stopping the run). `LENSCAPE_POOL=0` forks one process per task instead.
 - `amr.run_contour(...)` — the cell-refinement engine behind `maps.lattice` and `maps.refine`.
 
 ## Environment variables

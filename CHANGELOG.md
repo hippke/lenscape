@@ -27,6 +27,9 @@ First public version.
   before. `refine_gap` option (off).
 - `cfg["adaptive"]` (off): `densify` may accept one χ² at the interpolated start where the surrounding solutions
   agree; measured no net gain on MOA-2022-BLG-091 (the refinement repairs the slightly worse values).
+- `grid.Pool`: the map stages fork their worker processes once per stage instead of once per task (the per-task
+  fork dated from the VBBinaryLensing segfaults); crash tolerance is kept per worker. Large inputs of the refinement
+  and outlier tasks moved to module globals. `LENSCAPE_POOL=0` restores the per-task fork.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.

@@ -69,9 +69,150 @@ class Stages:
         self.log(f"\nStage {self.i}/{self.n}: {name}" + (f" - {what}" if what else ""))
 
 
+def _worker(conn, fn):
+    """Pool worker: runs fn(*args) for every (k, args) received until None; a Python error is reported, a crash
+    (segfault) ends the process and the parent sees the broken pipe."""
+    while True:
+        try:
+            msg = conn.recv()
+        except EOFError:
+            break
+        if msg is None:
+            break
+        k, args = msg
+        try:
+            conn.send((k, "ok", fn(*args)))
+        except Exception as e:
+            conn.send((k, "err", repr(e)))
+    conn.close()
+
+
+class Pool:
+    """Forked worker processes that each run fn(*args) for many tasks. submit(k, args) queues a task (dispatched
+    as soon as a worker is idle); next() waits for the next finished task and returns (k, status, value) with
+    status "ok", "err" (Python error, value = repr) or "crash" (the worker died twice on it; it is re-forked and the
+    task retried once before that); close() stops the workers. Workers inherit the parent's state at construction
+    (kernels, module globals such as _DATA), so large inputs belong there, not in the task arguments."""
+
+    def __init__(self, fn, workers, log=print, retries=1):
+        self.fn, self.log, self.retries = fn, log, retries
+        self.ctx = mp.get_context("fork")
+        self.pool = [self._spawn() for _ in range(max(1, workers))]
+        self.idle = list(range(len(self.pool)))
+        self.busy = {}                               # connection -> (slot, k, args)
+        self.queue = deque()
+        self.tries = {}
+        self.crashes = {}
+        self.done = deque()
+
+    def _spawn(self):
+        a, b = self.ctx.Pipe(duplex=True)
+        p = self.ctx.Process(target=_worker, args=(b, self.fn))
+        p.start()
+        b.close()
+        return [a, p]
+
+    @property
+    def n_idle(self):
+        return len(self.idle)
+
+    @property
+    def active(self):
+        return bool(self.queue or self.busy or self.done)
+
+    def submit(self, k, args):
+        self.tries.setdefault(k, 0)
+        self.queue.append((k, args))
+        self._dispatch()
+
+    def _dispatch(self):
+        while self.queue and self.idle:
+            slot = self.idle.pop()
+            k, args = self.queue.popleft()
+            self.pool[slot][0].send((k, args))
+            self.busy[self.pool[slot][0]] = (slot, k, args)
+
+    def next(self):
+        """(k, status, value) of the next finished task, or None when nothing is queued or running."""
+        self._dispatch()
+        while not self.done:
+            if not self.busy:
+                return None
+            for conn in wait(list(self.busy)):
+                slot, k, args = self.busy.pop(conn)
+                try:
+                    _, status, val = conn.recv()
+                except EOFError:
+                    status, val = "crash", None
+                    p = self.pool[slot][1]
+                    p.join()
+                    self.crashes[k] = p.exitcode
+                    self.pool[slot] = self._spawn()
+                self.idle.append(slot)
+                if status == "crash":
+                    self.tries[k] += 1
+                    if self.tries[k] <= self.retries:
+                        self.log(f"task {k}: worker died (exit {self.crashes[k]}), retrying")
+                        self.queue.append((k, args))
+                        continue
+                    self.log(f"task {k}: worker died (exit {self.crashes[k]}) again -> NaN")
+                elif status == "err":
+                    self.log(f"task {k}: python error {val}")
+                self.done.append((k, status, val))
+            self._dispatch()
+        return self.done.popleft()
+
+    def close(self):
+        for conn, p in self.pool:
+            try:
+                conn.send(None)
+            except (BrokenPipeError, OSError):
+                pass
+            conn.close()
+        for conn, p in self.pool:
+            p.join(timeout=5)
+            if p.is_alive():
+                p.terminate()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
 def run_isolated(fn, tasks, workers=19, retries=1, log=print, desc=None):
-    """Run fn(*args) for each task in its own forked process. Returns {k: result or None}, crashes.
-    desc: label of the progress bar (see progress_bar)."""
+    """Run fn(*args) for each task {k: args} in forked worker processes, `workers` at a time. Returns
+    ({k: result or None}, crashes). A task whose worker dies is retried once in a fresh worker, then reported with
+    the exit signal and given None. desc: label of the progress bar (see progress_bar).
+    The workers are forked once per call (Pool: they inherit the parent's state, kernels and module globals; large
+    inputs belong in module globals such as _DATA, not in the task arguments, which travel through a pipe) and
+    each runs many tasks; LENSCAPE_POOL=0 forks one process per task instead (the earlier behaviour)."""
+    if os.environ.get("LENSCAPE_POOL", "1") == "0":
+        return _run_forked(fn, tasks, workers, retries, log, desc)
+    bar = progress_bar(len(tasks), desc or fn.__name__.strip("_"))
+    results = {}
+    with Pool(fn, min(workers, max(1, len(tasks))), log, retries) as pool:
+        for k, args in tasks.items():
+            pool.submit(k, args)
+        while True:
+            out = pool.next()
+            if out is None:
+                break
+            k, status, val = out
+            results[k] = val if status == "ok" else None
+            if bar is not None:
+                bar.update(1)
+                if pool.crashes:
+                    bar.set_postfix(crashes=len(pool.crashes))
+        crashes = dict(pool.crashes)
+    if bar is not None:
+        bar.close()
+    return results, crashes
+
+
+def _run_forked(fn, tasks, workers=19, retries=1, log=print, desc=None):
+    """One forked process per task (LENSCAPE_POOL=0)."""
     ctx = mp.get_context("fork")
     bar = progress_bar(len(tasks), desc or fn.__name__.strip("_"))
     pending = deque(tasks.items())
@@ -226,6 +367,14 @@ def _relax_rows(rows, chi, pars, logs, logq, cfg, margin, active=None, cols=None
     return out
 
 
+_RELAX = None          # (chi, pars, logs, logq, cfg, margin, active, force) of the current relax sweep (inherited by the workers)
+
+
+def _relax_task(rows, cols):
+    chi, pars, logs, logq, cfg, margin, active, force = _RELAX
+    return _relax_rows(rows, chi, pars, logs, logq, cfg, margin, active, cols, force)
+
+
 def _near(mask, wrap_j=False):
     """mask dilated by one cell in each direction (8-neighbourhood); wrap_j: second axis periodic."""
     out = mask.copy()
@@ -293,9 +442,11 @@ def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log
             segs = [(i, c) for i, c in segs if active[i, c].any()]
         lowc = np.nan_to_num(chi - np.nanmin(chi), nan=1e30)
         segs.sort(key=lambda t: lowc[t[0], t[1]].min())
-        tasks = {k: ([i], chi, pars, logs, logq, cfg, margin, active, cols, force) for k, (i, cols) in enumerate(segs)}
+        global _RELAX
+        _RELAX = (chi, pars, logs, logq, cfg, margin, active, force)
+        tasks = {k: ([i], cols) for k, (i, cols) in enumerate(segs)}
         warmup(cfg, _DATA)
-        res, _ = run_isolated(_relax_rows, tasks, workers, log=log, desc=f"neighbour refinement, pass {sweep + 1}")
+        res, _ = run_isolated(_relax_task, tasks, workers, log=log, desc=f"neighbour refinement, pass {sweep + 1}")
         n = 0
         changed = np.zeros(chi.shape, bool)
         for k, (i, cols) in enumerate(segs):
@@ -323,6 +474,10 @@ def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log
             log(f"WARNING: neighbour refinement stopped at max_sweeps={max_sweeps} with {n} cells still improving; "
                 "the map is not converged (fronts of better solutions leave straight edges). Continue with polish().")
     return chi, pars
+
+
+def _heavy_task(ls, lq, cfg, warm):
+    return F.fit_point_heavy(ls, lq, _DATA, cfg, warm)
 
 
 def _outliers(chi, thr):
@@ -372,14 +527,14 @@ def repair_outliers(chi, pars, logs, logq, cfg, workers=19, thr=8.0, passes=3, l
         tasks = {}
         for i, j in zip(*np.nonzero(cand)):
             nb = [(i + a, j + b) for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)) if 0 <= i + a < ni and 0 <= j + b < nj]
-            tasks[(int(i), int(j))] = (float(logs[i]), float(logq[j]), _DATA, cfg,
+            tasks[(int(i), int(j))] = (float(logs[i]), float(logq[j]), cfg,
                                        [pars[k] for k in nb if np.all(np.isfinite(pars[k]))] + [pars[i, j]])
         if not tasks:
             if npass == 0:
                 log("recalculate outliers: no outliers found")
             break
         warmup(cfg, _DATA)
-        res, _ = run_isolated(F.fit_point_heavy, tasks, workers, log=log, desc=f"recalculate outliers, pass {npass + 1}")
+        res, _ = run_isolated(_heavy_task, tasks, workers, log=log, desc=f"recalculate outliers, pass {npass + 1}")
         n = 0
         changed = np.zeros(chi.shape, bool)
         searched = np.zeros(chi.shape, bool)
