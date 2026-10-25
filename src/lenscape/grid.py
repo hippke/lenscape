@@ -308,32 +308,55 @@ def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log
     return chi, pars
 
 
-def repair_outliers(chi, pars, logs, logq, cfg, workers=19, thr=8.0, passes=3, log=print, data=None):
-    """Cells whose chi2 exceeds both neighbours along s or along q by > thr are stuck fits in practice (e.g. MOA-2022-BLG-091: 60.4 -> 6.9
-    and 54.2 -> 28.2, matching their neighbours, while the neighbour relaxation had missed them): deep search
-    (fit_point_heavy) with the neighbours' and the cell's own solutions as extra starts. Returns chi, pars, n_fixed."""
+def _outliers(chi, thr):
+    """Points that stand out above their neighbours along s or along q by more than thr, by either of two rules:
+    above the larger of the two adjacent values (isolated spikes and one-cell-wide stripes), or above the quadratic
+    extrapolation of the surface through the two neighbours on either side (a stuck fit on a slope or next to other
+    stuck fits; one neighbour on a side: that value). Checked on MOA-2022-BLG-091 against later, better maps: of the
+    points the quadratic rule adds, 57 % (50 x 49 map) and 93 % (8x map) were lowered by > 1 later; of the points
+    only the adjacent rule finds, 52 % / none, so both are kept. Where no axis has neighbours on both sides (corners),
+    the point must exceed all available extrapolations."""
+    fin = np.isfinite(chi)
+    preds, both = [], np.zeros(chi.shape, bool)
+    flag = np.zeros(chi.shape, bool)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for di, dj in ((1, 0), (0, 1)):
+            side, adj = [], []
+            for sg in (-1, 1):
+                n1, n2 = _shift(chi, sg * di, sg * dj), _shift(chi, 2 * sg * di, 2 * sg * dj)
+                adj.append(n1)
+                side.append(np.where(np.isfinite(n2), 2 * n1 - n2, n1))
+            b = np.isfinite(adj[0]) & np.isfinite(adj[1])
+            flag |= b & ((chi - np.fmax(adj[0], adj[1]) > thr) | (chi - np.fmax(side[0], side[1]) > thr))
+            both |= b
+            preds += side
+        allmax = np.nanmax(np.array(preds), axis=0)
+    flag |= ~both & np.isfinite(allmax) & (chi - allmax > thr)
+    return flag & fin
+
+
+def repair_outliers(chi, pars, logs, logq, cfg, workers=19, thr=8.0, passes=3, log=print, data=None, min_gain=1.0):
+    """Stuck fits: points above their neighbours along s or along q by more than thr (see _outliers; e.g. MOA-2022-BLG-091: 60.4 -> 6.9 and 54.2 -> 28.2, matching their neighbours, while the
+    neighbour relaxation had missed them) get a deep search (fit_point_heavy) with the neighbours' and the point's
+    own solutions as extra starts. Any improvement is kept, but only an improvement by more than min_gain counts as
+    a repair: a point whose search gained less is a feature of the profile and is not searched again unless a
+    neighbour (or the point itself) changed by more than min_gain since; passes run until no such point is left.
+    Returns chi, pars, n_fixed (points improved by more than min_gain)."""
     global _DATA
     if data is not None:
         _DATA = data
     chi, pars = chi.copy(), pars.copy()
     nfix = 0
+    stale = np.ones(chi.shape, bool)                 # not searched since the neighbourhood last changed by > min_gain
+    ni, nj = chi.shape
     for npass in range(passes):
+        cand = _outliers(chi, thr) & stale
         tasks = {}
-        ni, nj = chi.shape
-        for i in range(ni):
-            for j in range(nj):
-                nb = [(i + a, j + b) for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)) if 0 <= i + a < ni and 0 <= j + b < nj]
-                if not nb or not np.isfinite(chi[i, j]):
-                    continue
-                # above both s-neighbours or both q-neighbours: isolated cells and one-cell-wide stripes (a column of
-                # stuck fits has stuck neighbours above/below, e.g. MOA-2022-BLG-091: 51.7 -> 14.1 with neighbours 8-10);
-                # edge cells (a top-row outlier was never checked before): an axis with both neighbours, or all neighbours
-                ridge_s = 0 < i < ni - 1 and chi[i, j] - max(chi[i - 1, j], chi[i + 1, j]) > thr
-                ridge_q = 0 < j < nj - 1 and chi[i, j] - max(chi[i, j - 1], chi[i, j + 1]) > thr
-                above_all = chi[i, j] - max(chi[k] for k in nb) > thr
-                if ridge_s or ridge_q or above_all:
-                    tasks[(i, j)] = (float(logs[i]), float(logq[j]), _DATA, cfg,
-                                     [pars[k] for k in nb if np.all(np.isfinite(pars[k]))] + [pars[i, j]])
+        for i, j in zip(*np.nonzero(cand)):
+            nb = [(i + a, j + b) for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1)) if 0 <= i + a < ni and 0 <= j + b < nj]
+            tasks[(int(i), int(j))] = (float(logs[i]), float(logq[j]), _DATA, cfg,
+                                       [pars[k] for k in nb if np.all(np.isfinite(pars[k]))] + [pars[i, j]])
         if not tasks:
             if npass == 0:
                 log("recalculate outliers: no outliers found")
@@ -341,13 +364,18 @@ def repair_outliers(chi, pars, logs, logq, cfg, workers=19, thr=8.0, passes=3, l
         warmup(cfg, _DATA)
         res, _ = run_isolated(F.fit_point_heavy, tasks, workers, log=log, desc=f"recalculate outliers, pass {npass + 1}")
         n = 0
+        changed = np.zeros(chi.shape, bool)
+        searched = np.zeros(chi.shape, bool)
         for (i, j), v in res.items():
+            searched[i, j] = v is not None               # a lost task is searched again next pass
             if v is not None and v[0] < chi[i, j]:
+                if chi[i, j] - v[0] > min_gain:
+                    changed[i, j] = True
+                    n += 1
                 chi[i, j], pars[i, j] = v[0], v[1][[0, 1, 2, 5, 6]] if len(v[1]) == 7 else v[1]
-                n += 1
         nfix += n
+        stale = (stale & ~searched) | _near(changed)
         log(f"recalculate outliers, pass {npass + 1}: {len(tasks)} outliers, {n} improved")
         if n == 0:
             break
     return chi, pars, nfix
-

@@ -6,6 +6,10 @@ First public version.
 
 - Fix: `data.bin_wings` checks every binned run against the best model (maps pass `best`) and keeps runs that a
   linear-in-time model misrepresents; an anomaly farther than one tE from t0 was binned through a straight line.
+- Fix: `grid.repair_outliers` flags stuck fits by two rules (above both adjacent values, or above the quadratic
+  extrapolation from two neighbours on either side; the second finds stuck fits on slopes that the first missed),
+  counts only improvements by more than `min_gain` (1.0) as repairs and does not search a point again unless its
+  neighbourhood changed by more than that: ridges of the profile were deep-searched in every pass of every map.
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.
