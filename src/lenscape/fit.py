@@ -252,6 +252,15 @@ def local_fit(be, data, ls, lq, y0, cfg, step, maxfev):
                       fatol=fatol)
 
 
+def _to_refine(trials, cfg):
+    """The explored trials to refine: the best two, the second only within cfg["refine_gap"] of the first
+    (default None: always; a trial hundreds above the best after its exploration rarely wins the refinement)."""
+    gap = cfg.get("refine_gap")
+    if len(trials) > 1 and (gap is None or trials[1][0] - trials[0][0] < gap):
+        return trials[:2]
+    return trials[:1]
+
+
 def fit_point_screen_d(ls, lq, data, cfg, warm=None):
     """Screen strategy in configurable coordinates with a scaled initial simplex.
     warm: optional neighbour solutions (t0, u0, tE, alpha, log rho) added as extra starts."""
@@ -274,7 +283,7 @@ def fit_point_screen_d(ls, lq, data, cfg, warm=None):
     lm = cfg.get("optimizer", "nm") != "nm" and co.kind == "teff"
     if lm:
         fr = lambda y: model.chi2_residuals(be, np.asarray(full_p(co.to_x(y), ls, lq), float), data)
-    for _, y in trials[:2]:
+    for _, y in _to_refine(trials, cfg):
         rs = cfg.get("refine_step", None if sc is None else 0.3 * sc)
         if lm:                                          # refinement by nm_then_lm (see local_fit)
             sim = None if rs is None else np.vstack([y] + [y + np.eye(5)[k] * st for k, st in enumerate(co.steps(y, rs))])
@@ -367,7 +376,7 @@ def fit_point_box(box, data, cfg, warm=None):
     # was worse (MOA-2022-BLG-091, 30 cells: 13 worse by > 1 than Nelder-Mead). cfg["box_lm"] (experimental):
     # short Nelder-Mead, then LM in (y, log s, log q) with s, q clipped to the cell
     lm_best = (np.inf, None)
-    for _, y in trials[:2]:
+    for _, y in _to_refine(trials, cfg):
         if cfg.get("box_lm") and co.kind == "teff":
             r = nm(y, cfg.get("explore_nfev", 100), cfg.get("refine_step", 0.3))
             z0 = np.r_[r.x[:5], to_s(r.x[5]), to_q(r.x[6])]

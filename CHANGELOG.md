@@ -21,6 +21,10 @@ First public version.
   5.8× less CPU in the point stage, same Δχ² bands.
 - `cfg["lm_tol"]` (0.03) and `cfg["nm_fatol"]` (1e-2): stopping rules of the local fits; LM no longer iterates to
   gains of 1e-3, far below the χ² noise (8 % fewer light curves in the point stage, same bands).
+- Cell stage: seeded cells skip the angle screen (`n_screen_seeded=0`) and all cell fits are refined by
+  Nelder–Mead + Levenberg–Marquardt in (log s, log q) (`box_lm` now on): MOA-2022-BLG-091 16 × 16 lattice from
+  scratch, cell stage 4019 → 1049 CPU-s (the stage was 89 % of the map), 96 % of the points in the same band as
+  before. `refine_gap` option (off).
 - Binary-lens magnifications in numba: point source, quadrupole and hexadecapole approximations on tracked images,
   contour integration with linear limb darkening; single lens and binary source (1L2S).
 - Fits at fixed (s, q) with a screen of trajectory angles; cell fits with s and q free inside a cell.

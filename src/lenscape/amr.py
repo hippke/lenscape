@@ -120,6 +120,10 @@ def run_contour(s_range, q_range, n0, levels, cfg, data, bands, workers=19, log=
     ws0 = (s_range[1] - s_range[0]) / n0[0]
     mirror_ok = abs(s_range[0] + s_range[1]) < 1e-9
     cfg_relax = dict(cfg, n_screen=0)
+    # cells with warm starts (seeded level-0 cells, children): cfg["n_screen_seeded"] angle-screen starts instead of
+    # cfg["n_screen"] (the seed grid has screened the angles already; default: the same)
+    cfg_warm = dict(cfg, n_screen=cfg.get("n_screen_seeded", cfg.get("n_screen", 4)))
+    with_warm = lambda warm: cfg_warm if warm else cfg
     wq0 = (q_range[1] - q_range[0]) / n0[1]
     top = bands[-1]
 
@@ -154,7 +158,7 @@ def run_contour(s_range, q_range, n0, levels, cfg, data, bands, workers=19, log=
                     key=lambda v: v[0])[:2]
         return [w for w in [seeds[k][1]] + [v[1] for v in nb] if w is not None]
 
-    tasks = {(0, i, j): (box(0, i, j), cfg, seed_warm(i, j)) for i in range(n0[0]) for j in range(n0[1])}
+    tasks = {(0, i, j): (box(0, i, j), with_warm(seed_warm(i, j)), seed_warm(i, j)) for i in range(n0[0]) for j in range(n0[1])}
     for lev in range(levels + 1):
         gb_prev = min(cells.values(), key=lambda v: v[0]) if cells else (np.inf, None)
         resumed = lev == 0 and start is not None
@@ -240,7 +244,7 @@ def run_contour(s_range, q_range, n0, levels, cfg, data, bands, workers=19, log=
             warm += [v[1] for v in nbs[:max_nb]]
             for a in (0, 1):
                 for b2 in (0, 1):
-                    tasks[(lev + 1, 2 * i + a, 2 * j + b2)] = (box(lev + 1, 2 * i + a, 2 * j + b2), cfg, warm)
+                    tasks[(lev + 1, 2 * i + a, 2 * j + b2)] = (box(lev + 1, 2 * i + a, 2 * j + b2), with_warm(warm), warm)
         log(f"  -> {len(split)} cells on band edges will be split (best fit {'still improving' if min_moving else 'converged'})")
         if not tasks:
             break

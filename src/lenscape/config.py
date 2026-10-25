@@ -23,6 +23,9 @@ DEFAULT = dict(
     lm_tol=0.03,                   # Levenberg-Marquardt stops when a step gains less than this in chi2 (noise ~0.07)
     nm_fatol=1e-2,                 # Nelder-Mead fatol of the local fits
     smooth=0.2,                    # refinement also refits points > 0.2 above the interpolation of their neighbours
+    n_screen_seeded=0,             # cell fits with warm starts (seeded cells, children): no angle screen of their own
+    box_lm=True,                   # cell fits refined by short Nelder-Mead + Levenberg-Marquardt in (log s, log q)
+    refine_gap=None,               # refine the second-best explored trial only within this gap of the best (None: always)
     profile_optimizer="nm",        # (log s, alpha) profile fits: Nelder-Mead ("nm_lm" is faster but weaker there)
 )
 
