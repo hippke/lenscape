@@ -138,11 +138,12 @@ def _prepare(data, cfg, best, bin_wings):
 
 
 def lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=BANDS, seed_grid=2, bin_wings=True,
-            log=print):
+            max_sweeps=30, log=print):
     """Profile chi2 on the lattice logs x logq (1-D arrays, uniform steps).
     data: Data; best: best-fit vector (t0, u0, tE, log s, log q, alpha, log rho) of the event, used as the start of
     the fits and to bin the far wings (bin_wings); without it, a start is estimated from the data. bands: Delta chi2
-    levels whose edges guide the cell refinement. Returns a dict: logs, logq, chi2 (ns, nq), pars (ns, nq, 5:
+    levels whose edges guide the cell refinement. max_sweeps: neighbour-refinement passes (as in densify; a map
+    stopped there is not converged and says so). Returns a dict: logs, logq, chi2 (ns, nq), pars (ns, nq, 5:
     t0, u0, tE, alpha, log rho), chi2_ref (lowest chi2 found), cells (stage-1 cell fits), wall-clock times."""
     workers = _workers(workers)
     logs, logq = np.asarray(logs, float), np.asarray(logq, float)
@@ -176,7 +177,7 @@ def lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=BANDS, se
             chi[i, j], pars[i, j] = v
     t2 = time.time()
     ST("Neighbour refinement", "refit points whose neighbours found a better solution")
-    chi2, pars2 = G.relax(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log)
+    chi2, pars2 = G.relax(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, max_sweeps=max_sweeps)
     ST("Recalculate outliers", "deep search for points that are worse than their neighbours")
     chi2, pars2, _ = G.repair_outliers(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10)
     t3 = time.time()

@@ -71,7 +71,7 @@ functions pass their `best` as the model (`bin_wings=True`).
 
 ## `lenscape.maps` — Δχ² maps
 
-### `lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=(4, 16, 36, 64, 100), seed_grid=2, bin_wings=True, log=print)`
+### `lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=(4, 16, 36, 64, 100), seed_grid=2, bin_wings=True, max_sweeps=30, log=print)`
 Profile χ² at every point of the lattice `logs × logq` (1-D arrays with uniform steps): s and q fixed, the other
 parameters fitted. Runs in stages (cell fits from a coarse seed grid, lattice-point fits, neighbour refinement,
 outlier recalculation; see [method.md](method.md)), each with a numbered header and a progress bar.
