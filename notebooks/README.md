@@ -15,11 +15,12 @@ Data are downloaded on first use from the public KMTNet archive and cached in `~
 | `08_mcmc` | posteriors with the ensemble sampler | 12 s |
 | `09_physical_parameters` | source radius, Einstein radius, proper motion | 1 s |
 | `10_caustic_crossings` | fits from rough starts with caustic-crossing starting points (simulated event, MOA-2022-BLG-091) | 1 min |
-| `han2025_figures` | Han et al. (2025) Figures 1–7 redrawn with lenscape (`han2025.py` rebuilds the data) | 30 s |
+| `han2025_figures` | Han et al. (2025) light curves and lens configurations (Figs. 1, 3, 4, 5, 7) from the CSV photometry (`han2025.py` rebuilt it from the paper's figures) | 10 s |
 | `tutorial_first_map_research_note` | for first-time users: from the photometry file `data/moa091_photometry.csv` to the research note's map (50 × 49 lattice, 2× and 4× densify) with all defaults | 45 min |
+| `tutorial_alpha_map` | the trajectory-angle map: all local minima in α and the filled (log *s*, α) profile, on the 1× map of the first tutorial | 60 min |
 
 \* Measured on a 16-core AMD Ryzen 9 7950X, data already downloaded; the first notebook also compiles the
 kernels (about 2 minutes, cached afterwards).
 
 The maps in `06_maps` and `han2025_figures` take longer at finer resolution; each notebook says how the runtime
-scales. `data/` holds lenscape results (solutions and maps) used by `han2025_figures` by default.
+scales. `data/` holds the photometry CSVs, the stored solutions and the 1× map used by the tutorials.
