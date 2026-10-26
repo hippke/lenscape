@@ -5,6 +5,7 @@ centre-of-mass frame, primary on the left, planet on the right, y2 -> |y2| by sy
 Points that fail both the point-source test and the hexadecapole test are flagged for the
 full contour integration (VBBL BinaryMag2) by the caller.
 """
+import os as _os
 import numpy as np
 from numba import njit
 
@@ -110,69 +111,211 @@ def _roots(c, z):
             z[i] -= _cdiv(p, dp)
 
 
+@njit(cache=True, inline="always", error_model="numpy", fastmath=FM)
+def _pstep(c, zi):
+    """One Newton step on the quintic at zi: (new zi, |step|^2; inf when p' = 0)."""
+    p = c[5]
+    dp = 0j
+    for k in range(4, -1, -1):
+        dp = dp * zi + p
+        p = p * zi + c[k]
+    if dp == 0:
+        return zi, np.inf
+    step = _cdiv(p, dp)
+    return zi - step, _cabs2(step)
+
+
+@njit(cache=True, inline="always", error_model="numpy", fastmath=FM)
+def _ptol(zi):
+    """Newton convergence: |step| < 1e-10 (1 + |z|) <=> |step|^2 < 1e-20 (1 + |z|)^2, on squared moduli (no sqrt)."""
+    return 1e-20 * (1.0 + _cabs2(zi) + 2.0 * max(abs(zi.real), abs(zi.imag)))
+
+
 @njit(cache=True, error_model='numpy', fastmath=FM)
 def _roots_newton(c, z):
-    """Per-root Newton from the previous point's roots (they move little between consecutive data points).
-    Falls back to Aberth if a root does not converge in 6 steps or two roots coincide. Tests on squared moduli
-    (no sqrt): |step| < 1e-10 (1 + |z|) <=> |step|^2 < 1e-20 (1 + |z|)^2."""
-    z00, z01, z02, z03, z04 = z[0], z[1], z[2], z[3], z[4]
-    for i in range(5):
-        conv = False
-        zi = z[i]
-        for it in range(6):
-            p = c[5]
-            dp = 0j
-            for k in range(4, -1, -1):
-                dp = dp * zi + p
-                p = p * zi + c[k]
-            if dp == 0:
-                break
-            step = _cdiv(p, dp)
-            zi -= step
-            if _cabs2(step) < 1e-20 * (1.0 + _cabs2(zi) + 2.0 * max(abs(zi.real), abs(zi.imag))):
-                conv = True
-                break
-        z[i] = zi
-        if not conv:
-            z[0], z[1], z[2], z[3], z[4] = z00, z01, z02, z03, z04
-            _roots(c, z)
-            return
-    for i in range(5):
-        for j in range(i):
-            if _cabs2(z[i] - z[j]) < 1e-14 * (1.0 + _cabs2(z[i])):
-                z[0], z[1], z[2], z[3], z[4] = z00, z01, z02, z03, z04
-                _roots(c, z)
-                return
+    """Per-root Newton from the previous point's roots (they move little between consecutive data points), the five
+    roots stepped together in one loop (each root's iterates are independent, so the out-of-order core overlaps the
+    five dependency chains: 222 -> 151 ns per solve on a Ryzen 7950X, identical results; the earlier version finished
+    one root before starting the next). Falls back to Aberth from the original roots if a root does not converge in
+    6 steps or two roots coincide."""
+    z0, z1, z2, z3, z4 = z[0], z[1], z[2], z[3], z[4]
+    c0 = c1 = c2 = c3 = c4 = False
+    for it in range(6):
+        if not c0:
+            z0, s0 = _pstep(c, z0)
+            c0 = s0 < _ptol(z0)
+        if not c1:
+            z1, s1 = _pstep(c, z1)
+            c1 = s1 < _ptol(z1)
+        if not c2:
+            z2, s2 = _pstep(c, z2)
+            c2 = s2 < _ptol(z2)
+        if not c3:
+            z3, s3 = _pstep(c, z3)
+            c3 = s3 < _ptol(z3)
+        if not c4:
+            z4, s4 = _pstep(c, z4)
+            c4 = s4 < _ptol(z4)
+        if c0 and c1 and c2 and c3 and c4:
+            break
+    if not (c0 and c1 and c2 and c3 and c4):
+        _roots(c, z)
+        return
+    if (_cabs2(z1 - z0) < 1e-14 * (1.0 + _cabs2(z1)) or _cabs2(z2 - z0) < 1e-14 * (1.0 + _cabs2(z2))
+            or _cabs2(z2 - z1) < 1e-14 * (1.0 + _cabs2(z2)) or _cabs2(z3 - z0) < 1e-14 * (1.0 + _cabs2(z3))
+            or _cabs2(z3 - z1) < 1e-14 * (1.0 + _cabs2(z3)) or _cabs2(z3 - z2) < 1e-14 * (1.0 + _cabs2(z3))
+            or _cabs2(z4 - z0) < 1e-14 * (1.0 + _cabs2(z4)) or _cabs2(z4 - z1) < 1e-14 * (1.0 + _cabs2(z4))
+            or _cabs2(z4 - z2) < 1e-14 * (1.0 + _cabs2(z4)) or _cabs2(z4 - z3) < 1e-14 * (1.0 + _cabs2(z4))):
+        _roots(c, z)
+        return
+    z[0] = z0
+    z[1] = z1
+    z[2] = z2
+    z[3] = z3
+    z[4] = z4
+
+
+# Far-field root solve (_roots_far; bench/farfield_*.py, RESEARCH_point_source_results.md): the three images of a
+# source outside the caustics from the single-lens images of the primary and Newton on the lens equation, the two
+# ghosts by deflating the quintic; exact and self-verifying, no Aberth. `far` arguments select it per call: always for
+# independent points without a warm start (mags_point, mags_hybrid: 2.5-6x faster), and for light curves only when
+# FARFIELD is set (speed-neutral there against the warm-started Newton solve, and it changes the magnifications at the
+# 1e-12 level, so off by default; LENSCAPE_FARFIELD=1 before import switches it on, numba caches per source file so
+# the module variable must be set before the kernels compile). Never inside the contour integrator's own _point calls
+# (near the caustics it fails and costs its attempt).
+FARFIELD = _os.environ.get("LENSCAPE_FARFIELD", "0") == "1"
+FAR_MAXIT = 8                           # Newton steps per image before giving up
+FAR_TOL2 = 1e-14                        # stop after a step with |step|^2 < FAR_TOL2 (1 + |z|^2)   (|step| < 1e-7)
+FAR_GMIN2 = 1e-8                        # the two deflated roots must have lens-equation residual^2 > this (ghosts)
+
+
+@njit(cache=True, inline="always", error_model="numpy", fastmath=FM)
+def _far_step(ac, m1, m2, y, zz):
+    """One Newton step on the lens equation zeta = z - m1/conj(z - a) - m2/conj(z) at zz (ac = conj(a)), with a single
+    complex inversion. Returns (new z, |step|^2, det J at the old position)."""
+    zc = zz.conjugate()
+    d1 = zc - ac
+    inv = _cinv(d1 * zc)                                 # 1/(zc - ac) = zc inv, 1/zc = d1 inv
+    ia = zc * inv
+    ib = d1 * inv
+    res = y - (zz - m1 * ia - m2 * ib)
+    J1c = m1 * ia * ia + m2 * ib * ib
+    dJ = 1.0 - _cabs2(J1c)
+    step = (res - J1c * res.conjugate()) * (1.0 / dJ)
+    return zz + step, _cabs2(step), dJ
+
+
+@njit(cache=True, error_model='numpy', fastmath=FM)
+def _roots_far(a, m1, m2, y, c, z):
+    """Far-field root solve: the five quintic roots without Aberth. The three images of a source outside the caustics
+    start from the two single-lens images of the primary (mass m1 at a; the planet's deflection is a first-order
+    perturbation, which the first Newton step absorbs) and from the planet's far-field image -m2 / conj(eta - eta_p)
+    (Chang-Refsdal; eta_p is the planet's position mapped to the source plane by the primary), and converge by Newton
+    on the lens equation (quadratic; stop after a step below sqrt(FAR_TOL2)); the remaining two roots (the ghosts)
+    come from deflating the quintic c by the three images, in closed form. Accepted only when the three images
+    converged, are distinct, have parities (+, -, -) and both deflated roots are clearly not images (residual above
+    FAR_GMIN2): then the root set is complete, for any (s, q), and z[0..2] are the images, z[3..4] the ghosts.
+    Returns True and fills z on success; otherwise z is untouched and the caller runs the regular solver."""
+    eta = y - a
+    r2 = _cabs2(eta)
+    if r2 < 1e-30:
+        return False
+    r = np.sqrt(r2)
+    sq = np.sqrt(r2 + 4.0 * m1.real)
+    ehat = eta * (1.0 / r)
+    za = a + (0.5 * (r + sq)) * ehat
+    zb = a + (0.5 * (r - sq)) * ehat
+    u = eta + a - m1 * _cinv(a.conjugate())              # eta - eta_p, eta_p = -a - m1 / conj(-a) = -a + m1 / conj(a)
+    if _cabs2(u) < 1e-30:
+        return False
+    zc_ = -m2 * _cinv(u.conjugate())
+    ac = a.conjugate()
+    # the three Newton chains interleaved (independent: the core overlaps their latencies)
+    ca = cb = cc = False
+    dJa = dJb = dJc = 1.0
+    for it in range(FAR_MAXIT):
+        if not ca:
+            za, s2a, dJa = _far_step(ac, m1, m2, y, za)
+            ca = s2a < FAR_TOL2 * (1.0 + _cabs2(za))
+        if not cb:
+            zb, s2b, dJb = _far_step(ac, m1, m2, y, zb)
+            cb = s2b < FAR_TOL2 * (1.0 + _cabs2(zb))
+        if not cc:
+            zc_, s2c, dJc = _far_step(ac, m1, m2, y, zc_)
+            cc = s2c < FAR_TOL2 * (1.0 + _cabs2(zc_))
+        if ca and cb and cc:
+            break
+    if not (ca and cb and cc):
+        return False
+    par = (1 if dJa > 0 else -1) + (1 if dJb > 0 else -1) + (1 if dJc > 0 else -1)
+    if _cabs2(zb - za) < 1e-16 * (1.0 + _cabs2(zb)) or _cabs2(zc_ - za) < 1e-16 * (1.0 + _cabs2(zc_)) \
+            or _cabs2(zc_ - zb) < 1e-16 * (1.0 + _cabs2(zc_)):
+        return False
+    if par != -1:
+        return False
+    # deflate c (ascending) by (z - za)(z - zb)(z - zc_): three synthetic divisions -> s2 z^2 + s1 z + s0
+    q4 = c[5]; q3 = c[4] + za * q4; q2 = c[3] + za * q3; q1 = c[2] + za * q2
+    p3 = q4; p2 = q3 + zb * p3; p1 = q2 + zb * p2
+    s2 = p3; s1 = p2 + zc_ * s2; s0 = p1 + zc_ * s1
+    sq2 = np.sqrt(s1 * s1 - 4.0 * s2 * s0)
+    if s1.real * sq2.real + s1.imag * sq2.imag >= 0.0:
+        t = -0.5 * (s1 + sq2)
+    else:
+        t = -0.5 * (s1 - sq2)
+    if _cabs2(t) < 1e-300:
+        return False
+    inv = _cinv(s2 * t)
+    zd = t * t * inv
+    ze = s0 * s2 * inv
+    for i in range(2):
+        zz = zd if i == 0 else ze
+        zc = zz.conjugate()
+        d1 = zc - ac
+        g = _cabs2((y - zz) + (m1 * zc + m2 * d1) * _cinv(d1 * zc))
+        if not (g > FAR_GMIN2):
+            return False
+    z[0] = za
+    z[1] = zb
+    z[2] = zc_
+    z[3] = zd
+    z[4] = ze
+    return True
 
 
 NEWTON_ROOTS = True
 
 
 @njit(cache=True, error_model='numpy', fastmath=FM)
-def _point(a, m1, m2, s, q, y1, y2, c, z, need_test):
+def _point(a, m1, m2, s, q, y1, y2, c, z, need_test, far=False):
     """Point-source magnification at (y1, |y2|). Returns (mag, nimg, corrquad, corrquad2, safedist, ok, lap);
-    lap = source-plane Laplacian of the total magnification (need_test only)."""
+    lap = source-plane Laplacian of the total magnification (need_test only). far: try the far-field root solve
+    first (see FARFIELD); z is the warm start of the regular solve and receives the roots either way."""
     y = complex(y1, abs(y2)) + a * m1
     yc = y.conjugate()
     _coefs(a, m1, m2, y, c)
-    if NEWTON_ROOTS:
-        _roots_newton(c, z)
-    else:
-        _roots(c, z)
-    # lens-equation residuals; track the three worst roots without allocating (w1 worst)
-    w1 = w2 = w3 = -1
-    g1 = g2 = g3 = -1.0
-    for i in range(5):
-        zz = z[i]
-        zc = zz.conjugate()
-        g = _cabs2((y - zz) + m1 * _cinv(zc - a) + m2 * _cinv(zc))      # squared residual (ranking only)
-        if g > g1:
-            w3, g3, w2, g2, w1, g1 = w2, g2, w1, g1, i, g
-        elif g > g2:
-            w3, g3, w2, g2 = w2, g2, i, g
-        elif g > g3:
-            w3, g3 = i, g
-    three = np.sqrt(g2) * DLMIN > np.sqrt(g3) + 1e-12
+    w1 = 3
+    w2 = 4
+    three = True
+    if not (far and _roots_far(a, m1, m2, y, c, z)):            # far tier: z[0..2] images, z[3..4] ghosts
+        if NEWTON_ROOTS:
+            _roots_newton(c, z)
+        else:
+            _roots(c, z)
+        # lens-equation residuals; track the three worst roots without allocating (w1 worst)
+        w1 = w2 = w3 = -1
+        g1 = g2 = g3 = -1.0
+        for i in range(5):
+            zz = z[i]
+            zc = zz.conjugate()
+            d1 = zc - a
+            g = _cabs2((y - zz) + m1 * _cinv(zc - a) + m2 * _cinv(zc))      # squared residual (ranking only)
+            if g > g1:
+                w3, g3, w2, g2, w1, g1 = w2, g2, w1, g1, i, g
+            elif g > g2:
+                w3, g3, w2, g2 = w2, g2, i, g
+            elif g > g3:
+                w3, g3 = i, g
+        three = np.sqrt(g2) * DLMIN > np.sqrt(g3) + 1e-12
     mag = 0.0
     corrquad = 0.0
     corrquad2 = 0.0
@@ -410,10 +553,10 @@ FAST_HEX = True
 
 
 @njit(cache=True, error_model='numpy', fastmath=FM)
-def _one(a, m1, m2, s, q, rho, y1, y2, c, z, zs, tol, hexeps, imgs, par, work, ld=0.0, fast=True):
+def _one(a, m1, m2, s, q, rho, y1, y2, c, z, zs, tol, hexeps, imgs, par, work, ld=0.0, fast=True, far=False):
     """Hybrid magnification of one point. Returns (A, flag): 0 point source, 1 hexadecapole, 2 contour."""
     rho2 = rho * rho
-    mag0, nimg, cq, cq2_raw, sd, ok, lap = _point(a, m1, m2, s, q, y1, y2, c, z, True)
+    mag0, nimg, cq, cq2_raw, sd, ok, lap = _point(a, m1, m2, s, q, y1, y2, c, z, True, far)
     cq *= 6 * (rho2 + 1e-4 * tol)
     cq2 = cq2_raw * (rho + 1e-3)
     if ok and cq < tol and cq2 < 1 and sd > 4 * rho2:
@@ -472,7 +615,7 @@ def _init_roots(z, s):
 
 
 @njit(cache=True, error_model='numpy', fastmath=FM)
-def lc_hybrid(ls, lq, u0, alpha, lr, tE, t0, t, tol, hexeps):
+def lc_hybrid(ls, lq, u0, alpha, lr, tE, t0, t, tol, hexeps, far=FARFIELD):
     """Light curve. Returns (A, flag): flag 0 point source, 1 hexadecapole, 2 needs contour (A = nan)."""
     s = 10.0 ** ls
     q = 10.0 ** lq
@@ -492,13 +635,13 @@ def lc_hybrid(ls, lq, u0, alpha, lr, tE, t0, t, tol, hexeps):
     for k in range(n):
         tn = (t[k] - t0) / tE
         A[k], flag[k] = _one(a, m1, m2, s, q, rho, u0 * sa - tn * ca, -u0 * ca - tn * sa, c, z, zs, tol, hexeps,
-                             imgs, par, work)
+                             imgs, par, work, 0.0, True, far)
     return A, flag
 
 
 @njit(cache=True, error_model='numpy', fastmath=FM)
-def mags_hybrid(s_arr, q_arr, y1_arr, y2_arr, rho_arr, tol, hexeps, ld=0.0):
-    """Hybrid magnifications for independent samples (fresh root guesses each)."""
+def mags_hybrid(s_arr, q_arr, y1_arr, y2_arr, rho_arr, tol, hexeps, ld=0.0, far=True):
+    """Hybrid magnifications for independent samples (fresh root guesses each; far-field solve first)."""
     n = s_arr.shape[0]
     A = np.empty(n)
     flag = np.zeros(n, np.int8)
@@ -512,13 +655,13 @@ def mags_hybrid(s_arr, q_arr, y1_arr, y2_arr, rho_arr, tol, hexeps, ld=0.0):
         a, m1, m2 = _setup(s_arr[k], q_arr[k])
         _init_roots(z, s_arr[k])
         A[k], flag[k] = _one(a, m1, m2, s_arr[k], q_arr[k], rho_arr[k], y1_arr[k], y2_arr[k], c, z, zs, tol, hexeps,
-                             imgs, par, work, ld)
+                             imgs, par, work, ld, True, far)
     return A, flag
 
 
 @njit(cache=True, error_model='numpy', fastmath=FM)
-def mags_point(s_arr, q_arr, y1_arr, y2_arr):
-    """Point-source magnifications for arrays (testing)."""
+def mags_point(s_arr, q_arr, y1_arr, y2_arr, far=True):
+    """Point-source magnifications for arrays (tests, caustics.magnification_map); far-field solve first."""
     n = s_arr.shape[0]
     out = np.empty(n)
     c = np.empty(6, np.complex128)
@@ -527,5 +670,5 @@ def mags_point(s_arr, q_arr, y1_arr, y2_arr):
         a, m1, m2 = _setup(s_arr[k], q_arr[k])
         for i in range(5):
             z[i] = complex(np.cos(2 * np.pi * i / 5 + 0.3), np.sin(2 * np.pi * i / 5 + 0.3)) * (1.0 + s_arr[k])
-        out[k] = _point(a, m1, m2, s_arr[k], q_arr[k], y1_arr[k], y2_arr[k], c, z, False)[0]
+        out[k] = _point(a, m1, m2, s_arr[k], q_arr[k], y1_arr[k], y2_arr[k], c, z, False, far)[0]
     return out

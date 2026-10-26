@@ -110,3 +110,13 @@ First public version.
 - Figures: model light curves with residuals and insets, caustics and source trajectories, Δχ² maps.
 - Data: KMTNet archive and arXiv downloads (`datasets`), data points from vector figures (`eps`).
 - Tutorials: ten notebooks and a reproduction of Han et al. (2025), Figures 1–7.
+- Point-source solve (`nbmag`): the per-root Newton iteration from the previous point's roots steps the five
+  roots together instead of one after another; the processor overlaps the independent chains (the solve is
+  latency-bound): 222 → 151 ns per point on a Ryzen 7950X, kernel light curve of MOA-2022-BLG-091 (1 090 points)
+  396 → 321 µs, full light curve 654 → 612 µs, bit-identical results. New far-field solve `nbmag._roots_far`
+  (images from perturbation theory and Newton on the lens equation, ghosts by deflating the quintic, accepted only
+  when the root set is verified complete, so exact for any s, q): used for independent points without a warm
+  start (`mags_point` 920 → 441 ns per point, `caustics.magnification_map` 5×); for light curves it is
+  speed-neutral and off (`nbmag.FARFIELD`, `LENSCAPE_FARFIELD=1`). A branch-free block solve vectorised over 8–32
+  points (AVX-512) was prototyped and is slower end to end (fixed step count, 7–9 % fallbacks). Scripts and
+  numbers: `bench/farfield_*.py`, `bench/part2_*.py`, `RESEARCH_point_source_results.md` (project directory).

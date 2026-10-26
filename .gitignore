@@ -9,3 +9,4 @@ dist/
 *.npz
 !tests/data/*.npz
 !notebooks/data/*.npz
+bench/farfield_out/

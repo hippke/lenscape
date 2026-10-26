@@ -13,7 +13,17 @@ All magnification code is lenscape's own, compiled with numba; VBBinaryLensing i
 reference.
 
 1. **Point source.** The lens equation is solved as a fifth-order polynomial, as in VBBinaryLensing
-   (Bozza 2010; Bozza et al. 2018), with the roots of the previous point as starting values.
+   (Bozza 2010; Bozza et al. 2018), with the roots of the previous point as starting values: Newton on each root,
+   the five roots stepped together so that the processor overlaps their independent dependency chains (the solve is
+   latency-bound: 222 → 151 ns per point on a Ryzen 7950X, 1.23× on a light curve, identical results), and
+   Ehrlich–Aberth where a root does not converge. For independent points without a warm start
+   (`nbmag.mags_point`, `caustics.magnification_map`) a far-field solve replaces the polynomial iteration: the
+   three images of a source outside the caustics start from the two single-lens images of the primary and the
+   planet's Chang–Refsdal image and converge by Newton on the lens equation, the two remaining roots follow from
+   deflating the quintic, and the set is accepted only when it is complete (three distinct converged images with
+   parities +, −, −, two deflated roots that are not images), so it is exact for any (s, q) and falls back
+   otherwise (2.5–6× faster than Aberth from fresh starts; `nbmag.FARFIELD` enables it for light curves, where it
+   is speed-neutral). Details and measurements: `RESEARCH_point_source_results.md`, scripts in `bench/`.
 2. **Near caustics.** The quadrupole test of VBBinaryLensing decides whether the point source is good enough. If
    not, lenscape tries the quadrupole (analytic, from derivatives already computed for the test) and the
    hexadecapole approximation (Gould 2008; Pejcha & Heyrovský 2009; Cassan 2017), evaluated on images tracked from

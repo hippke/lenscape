@@ -562,7 +562,8 @@ def lc_full(ls, lq, u0, alpha, lr, tE, t0, t, tol, hexeps, ctol, ld=0.0):
                     r = dt1 / dt0
                     for i in range(5):
                         z[i] = z[i] + r * (z[i] - zp[i])
-        A[k], flag[k] = nbmag._one(a, m1, m2, s, q, rho, y1, y2, c, z, zs, tol, hexeps, imgs, par, work, ld)
+        A[k], flag[k] = nbmag._one(a, m1, m2, s, q, rho, y1, y2, c, z, zs, tol, hexeps, imgs, par, work, ld, True,
+                                   nbmag.FARFIELD)
         if flag[k] == 2:
             Ak, st, _ = mag_disk_ld(s, q, y1, y2, rho, ctol, ld, 8, 2048, z)
             if st >= 0:
@@ -624,7 +625,8 @@ def lc_full_grad(ls, lq, u0, alpha, lr, tE, t0, t, tol, hexeps, ctol, ld=0.0):
                     r = dt1 / dt0
                     for i in range(5):
                         z[i] = z[i] + r * (z[i] - zp[i])
-        A[k], flag[k] = nbmag._one(a, m1, m2, s, q, rho, y1, y2, c, z, zs, tol, hexeps, imgs, par, work, ld)
+        A[k], flag[k] = nbmag._one(a, m1, m2, s, q, rho, y1, y2, c, z, zs, tol, hexeps, imgs, par, work, ld, True,
+                                   nbmag.FARFIELD)
         m0, g1, g2 = nbmag._point_grad(a, m1, m2, y1, y2, z)
         if flag[k] == 1:
             # finite-source correction ~ rho^2 lap / 8 (Gould 2008 quadrupole, limb-darkening factor as in _one):
@@ -696,7 +698,7 @@ def lc_traj(s_arr, q, rho, y1_arr, y2_arr, tol, hexeps, ctol, ld=0.0):
         s = s_arr[k]
         a, m1, m2 = nbmag._setup(s, q)
         A[k], flag[k] = nbmag._one(a, m1, m2, s, q, rho, y1_arr[k], y2_arr[k], c, z, zs, tol, hexeps, imgs, par,
-                                   work, ld)
+                                   work, ld, True, nbmag.FARFIELD)
         if flag[k] == 2:
             Ak, st, _ = mag_disk_ld(s, q, y1_arr[k], y2_arr[k], rho, ctol, ld, 8, 2048, z)
             if st >= 0:
