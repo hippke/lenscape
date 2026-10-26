@@ -4,6 +4,24 @@
 
 First public version.
 
+- Stage-1 refinement (`config.LATTICE`): every neighbour's solution and the source-size variants of the two best
+  neighbours are fitted (`relax_deep`; the one-chi2 pre-check rejected the better family's solution at family
+  boundaries, where it evaluates far worse but its fit converges), starts in one basin are fitted once
+  (`relax_dedupe`), every start gets a short fit and only the best result the precise one (`relax_cheap`), and
+  the neighbours' solutions are also tried at the other source sizes (`rho_refine`). Han's photometry of
+  MOA-2022-BLG-091, 50 x 49 from scratch: the map of the full fits at 0.48x the CPU (57k -> 27k CPU-s; 2.0 % of
+  visible points differ by > 1, none by > 10); against the earlier refinement, roughness 0.97 -> 0.81 at 1.0x.
+- `cfg["explore_clip"]` (10 in `config.LATTICE`): the Nelder-Mead exploration of a local fit minimises the chi2
+  with every residual capped at this many sigma; LM and the returned value use the exact chi2. A point-like
+  source makes needles in the chi2 surface wherever a data point sits on a fold caustic (3e-5 wide in u0,
+  10x the surroundings), and the simplex contracts around them: fits from a neighbour's solution reach the map
+  value 73 % instead of 67 % of the time (231 starts, equal cost). `explore_rho_floor` (log rho floored in the
+  exploration) was worse (41 %) and is off.
+- Options measured without gain, kept off: `branches` (k distinct solutions kept and propagated per point:
+  same map at 1.9x `relax_cheap`'s cost), `point_screen` (angle x source-size screen at every lattice point:
+  alone it loses the second valley along u0 tE; with `branches=3` the best map of the test at 1.9x),
+  `relax_deep="demand"` (deep fits only where a neighbour is lower: no saving on a steep surface),
+  `relax_cheap_top`, `relax_deep_rho=1` (misses), `precise_top=2` (cost-neutral with the full fits).
 - Fix: `data.bin_wings` checks every binned run against the best model (maps pass `best`) and keeps runs that a
   linear-in-time model misrepresents; an anomaly farther than one tE from t0 was binned through a straight line.
 - Fix: `grid.repair_outliers` flags stuck fits by two rules (above both adjacent values, or above the quadratic
@@ -81,6 +99,8 @@ First public version.
 - (log s, α) profiles: `one_sign` option (each solution once, as in published maps). Start assignment in
   `alpha_profile` / `densify` by a bucketed nearest-neighbour search (seconds instead of a full sort per point).
 - `cfg["rho_starts"]`, `cfg["rho_fit"]`: extra source-size starts for lattice-point fits.
+- `lattice()` defaults to `config.LATTICE` (source-size starts, precise local fits: `explore_nfev=300`, `lm_tol=1e-4`,
+  `lm_maxit` 200) and no `dchi2_cut`: stage-1 maps much cleaner (42 % → 12.5 % of visible points worse by > 1).
 - `fit.offset_partner` / `fit.fit_partner`: start for the offset-degenerate partner of a solution.
 - `cfg["interp_start"]` for `densify`; `maps.alpha_profile_refine`; (log s, α) refinement now spreads solutions of
   both signs of u0.

@@ -386,7 +386,7 @@ def _rough_at(chi, i, j, tau, wrap_j=False):
     return bool(_rough(w, tau)[2, 2])
 
 
-def _relax_point(ls, lq, own, nb_pars, cfg, margin, forced):
+def _relax_point(ls, lq, own, nb_pars, cfg, margin, forced, nb_chi=None):
     """One point of the queue refinement: the neighbours' solutions nb_pars evaluated at (ls, lq); the best
     cfg["relax_tries"] (+1 if forced) that beat own - margin (forced: all, ranked) are refined (fit.local_fit).
     Returns (chi2, x) if one beats own by more than margin (forced: 0.01), else None."""
@@ -395,6 +395,48 @@ def _relax_point(ls, lq, own, nb_pars, cfg, margin, forced):
     co = F.Coords(cfg.get("coords", "teff"))
     fx = lambda x: model.chi2(be, F.full_p(x, ls, lq), _DATA)
     best_c = own if np.isfinite(own) else np.inf
+    deep = cfg.get("relax_deep")
+    if deep == "demand" and not forced and not (nb_chi is not None and any(cn < best_c - margin for cn in nb_chi)):
+        deep = False                      # deep search only where a neighbour's own chi2 is lower, or the point is rough
+    if deep:
+        # every neighbour's solution fitted (no one-chi2 pre-check), plus the source-size variants of the neighbours
+        # with the lowest own chi2: at the boundary of two solution families the better family's solution, evaluated
+        # at a point of the other, is usually far worse, but its fit converges to the better value
+        order_nb = sorted(range(len(nb_pars)), key=lambda k: nb_chi[k] if nb_chi is not None else 0.0)
+        starts = [nb_pars[k] for k in order_nb]
+        for k in order_nb[:cfg.get("relax_deep_rho", 2)]:
+            starts += [np.r_[nb_pars[k][:4], lr] for lr in cfg.get("rho_starts") or ()]
+        ys, done = [], []
+        for x0 in starts:
+            y = co.from_x(np.asarray(x0, float))
+            if cfg.get("relax_dedupe") and any(F.same_start(y, z) for z in done):
+                continue                  # start in the basin of one already fitted
+            done.append(y)
+            ys.append(y)
+        new, found = None, []
+        if cfg.get("relax_cheap"):
+            # every start a short fit (the cheap settings of config.DEFAULT), only the best result the precise one
+            cheap = dict(cfg, explore_nfev=100, lm_tol=0.03, lm_maxit=50)
+            res = [F.local_fit(be, _DATA, ls, lq, y, cheap, cfg.get("refine_step", 0.3), cfg.get("relax_nfev", 600))
+                   for y in ys]
+            res.sort(key=lambda r: r[0])
+            found = list(res)
+            for rc, ry in res[:cfg.get("relax_cheap_top", 1)]:
+                rc2, ry2 = F.local_fit(be, _DATA, ls, lq, ry, cfg, 0.1, 1000)
+                if rc2 < rc:
+                    rc, ry = rc2, ry2
+                    found.append((rc, ry))
+                if rc < best_c - 0.01:
+                    best_c, new = rc, co.to_x(ry)
+        else:
+            for y in ys:
+                rc, ry = F.local_fit(be, _DATA, ls, lq, y, cfg, cfg.get("refine_step", 0.3), cfg.get("relax_nfev", 600))
+                found.append((rc, ry))
+                if rc < best_c - 0.01:
+                    best_c, new = rc, co.to_x(ry)
+        if cfg.get("branches"):
+            return (best_c, new, [(c, co.to_x(y)) for c, y in F.top_distinct(found, co, cfg["branches"])])
+        return (best_c, new) if new is not None else None
     cands = []
     for x0 in nb_pars:
         c = fx(x0)
@@ -404,7 +446,21 @@ def _relax_point(ls, lq, own, nb_pars, cfg, margin, forced):
     tries = cfg.get("relax_tries", 2)
     mg = 0.01 if forced else margin
     new = None
-    for c0, x0 in cands[:tries + 1 if forced else tries]:
+    todo = cands[:tries + 1 if forced else tries]
+    if cfg.get("nb_trigger") and nb_chi is not None and not forced:
+        # neighbours whose own chi2 is lower by > margin are refitted from even if their solution, evaluated here,
+        # is not better yet (at the boundary of two solution families it usually is not, but its refit is)
+        have = {id(x) for _, x in todo}
+        lower = sorted((cn, x) for cn, x in zip(nb_chi, nb_pars) if cn < best_c - margin and id(x) not in have)
+        todo = todo + [(cn, x) for cn, x in lower[:cfg.get("nb_trigger_tries", 2)]]
+    if cfg.get("rho_refine") and cfg.get("rho_starts"):
+        # the neighbours' solutions at the other source sizes: the best of them by chi2 at this point is fitted too
+        # (a region stuck at the large-source minimum has no neighbour with the small-source one)
+        var = [np.r_[x0[:4], lr] for x0 in nb_pars for lr in cfg["rho_starts"]]
+        cv = [fx(v) for v in var]
+        k = int(np.argmin(cv))
+        todo = todo + [(cv[k], var[k])]
+    for c0, x0 in todo:
         if cfg.get("optimizer", "nm") != "nm":
             rc, ry = F.local_fit(be, _DATA, ls, lq, co.from_x(x0), cfg, cfg.get("refine_step", 0.3),
                                  cfg.get("relax_nfev", 600))
@@ -419,7 +475,7 @@ def _relax_point(ls, lq, own, nb_pars, cfg, margin, forced):
 
 
 def refine_queue(chi, pars, fn, make_args, workers=19, margin=1.0, log=print, desc="neighbour refinement",
-                 wrap_j=False, smooth=None, active=None, max_refits=30, stats=None):
+                 wrap_j=False, smooth=None, active=None, max_refits=30, stats=None, alts=None, merge_alts=None):
     """Asynchronous neighbour refinement of a map (chi, pars updated copies returned). Every point is a task
     (fn(*make_args(i, j, chi, pars, forced)) -> (chi2, x) or None); a point whose result improves it by more than
     `margin` (or that was unknown) makes its eight neighbours stale, and stale points are queued, the largest gap to
@@ -428,7 +484,8 @@ def refine_queue(chi, pars, fn, make_args, workers=19, margin=1.0, log=print, de
     state satisfies the same rule as the sweeps (no stale point left), reached in a timing-dependent order.
     Forced points (rough by `smooth`, grid._rough) are refit even without a better neighbour; their gains below the
     margin are kept but do not propagate. active: mask of points to consider (None: all). A point is refit at most
-    max_refits times."""
+    max_refits times. alts: {(i, j): [(chi2, x), ...]} solution branches per point (multi-branch maps), updated in
+    place with merge_alts(old, new) -> (merged, changed); a new branch at a point makes its neighbours stale too."""
     import heapq
     chi, pars = chi.copy(), pars.copy()
     ni, nj = chi.shape
@@ -464,7 +521,7 @@ def refine_queue(chi, pars, fn, make_args, workers=19, margin=1.0, log=print, de
         for j in range(nj):
             push(i, j)
     bar = progress_bar(len(heap), desc)
-    n_task = n_imp = n_small = n_capped = 0
+    n_task = n_imp = n_small = n_capped = n_branch = 0
     with Pool(fn, workers, log) as pool:
         def dispatch():
             nonlocal n_task
@@ -496,11 +553,24 @@ def refine_queue(chi, pars, fn, make_args, workers=19, margin=1.0, log=print, de
                 bar.update(1)
             if status != "ok":
                 stale[i, j] = True                   # lost task: check again
+            branch_new = False
+            if status == "ok" and alts is not None and v is not None and len(v) > 2 and v[2]:
+                alts[(i, j)], branch_new = merge_alts(alts.get((i, j), []), v[2])
+            if status == "ok" and branch_new and not (v[1] is not None and (v[0] < chi[i, j] or not np.isfinite(chi[i, j]))):
+                n_branch += 1
+                for a in (-1, 0, 1):
+                    for b in (-1, 0, 1):
+                        jj = (j + b) % nj if wrap_j else j + b
+                        if (a or b) and 0 <= i + a < ni and 0 <= jj < nj:
+                            stale[i + a, jj] = True
+                            push(i + a, jj)
+            if status != "ok":
+                pass
             elif v is not None and v[1] is not None and (v[0] < chi[i, j] or not np.isfinite(chi[i, j])):
                 gain = chi[i, j] - v[0]
                 unknown = not np.isfinite(chi[i, j])
                 chi[i, j], pars[i, j] = v[0], v[1]
-                if gain > margin or unknown:
+                if gain > margin or unknown or branch_new:
                     n_imp += 1
                     for a in (-1, 0, 1):
                         for b in (-1, 0, 1):
@@ -526,6 +596,7 @@ def refine_queue(chi, pars, fn, make_args, workers=19, margin=1.0, log=print, de
         stats.update(tasks=n_task, improved=n_imp, small=n_small)
     log(f"{desc}: {n_task} points checked, {n_imp} improved"
         + (f" ({n_small} by less than {margin:g})" if n_small else "")
+        + (f", {n_branch} new branches" if n_branch else "")
         + (f"; WARNING: {n_capped} points reached max_refits={max_refits} (not converged)" if n_capped else ""))
     return chi, pars
 
@@ -557,7 +628,7 @@ def _near(mask, wrap_j=False):
 
 
 def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log=print, data=None, dchi2_cut=None,
-          seg=5, changed_only=True, smooth=None, mode=None):
+          seg=5, changed_only=True, smooth=None, mode=None, alts=None):
     """Neighbour refinement of a lattice map until no point has a neighbour solution that beats it by > margin.
     mode (default cfg["relax_mode"], "queue"): "queue" = asynchronous, one task per stale point, improvements
     propagate as fast as the fits finish (refine_queue); "sweeps" = the earlier Jacobi sweeps (relax_sweeps; a
@@ -579,16 +650,34 @@ def relax(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log
         active = _near(low)
     ni, nj = chi.shape
 
+    co = F.Coords(cfg.get("coords", "teff"))
+
     def make_args(i, j, chi, pars, forced):
-        nb = [pars[a, b] for a in (i - 1, i, i + 1) for b in (j - 1, j, j + 1)
-              if (a != i or b != j) and 0 <= a < ni and 0 <= b < nj and np.all(np.isfinite(pars[a, b]))]
-        if not nb:
+        idx = [(a, b) for a in (i - 1, i, i + 1) for b in (j - 1, j, j + 1)
+               if (a != i or b != j) and 0 <= a < ni and 0 <= b < nj and np.all(np.isfinite(pars[a, b]))]
+        if not idx:
             return None
-        return (float(logs[i]), float(logq[j]), float(chi[i, j]), nb, cfg, margin, forced)
+        if alts is not None:                         # every branch of every neighbour (best first)
+            nb = [(c, x) for a, b in idx for c, x in (alts.get((a, b)) or [(chi[a, b], pars[a, b])])]
+            nb.sort(key=lambda v: v[0])
+            return (float(logs[i]), float(logq[j]), float(chi[i, j]), [x for _, x in nb], cfg, margin, forced,
+                    [float(c) for c, _ in nb])
+        nb = [pars[a, b] for a, b in idx]
+        return (float(logs[i]), float(logq[j]), float(chi[i, j]), nb, cfg, margin, forced,
+                [float(chi[a, b]) for a, b in idx])
+
+    def merge_alts(old, new):
+        """Merge the branches found at a point into its list: (merged top-k, a branch unknown before entered)."""
+        k = cfg["branches"]
+        before = [(c, co.from_x(np.asarray(x, float))) for c, x in old]
+        merged = F.top_distinct([(c, co.from_x(np.asarray(x, float))) for c, x in old + new], co, k)
+        changed = any(not any(F.same_branch(c, y, c2, z) for c2, z in before) for c, y in merged)
+        return [(c, co.to_x(y)) for c, y in merged], changed
 
     warmup(cfg, _DATA)
     return refine_queue(chi, pars, _relax_point, make_args, workers, margin, log, "neighbour refinement",
-                        smooth=smooth, active=active, max_refits=max_sweeps)
+                        smooth=smooth, active=active, max_refits=max_sweeps, alts=alts,
+                        merge_alts=merge_alts if alts is not None else None)
 
 
 def relax_sweeps(chi, pars, logs, logq, cfg, workers=19, margin=1.0, max_sweeps=10, log=print, data=None,

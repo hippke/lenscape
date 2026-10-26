@@ -40,5 +40,26 @@ DEFAULT = dict(
     profile_dedupe=True,           # profile stage 1: skip starts in the basin of one already fitted (-9 % CPU, same quality)
 )
 
+# Stage 1 (maps.lattice() from scratch): the fits there start far from the solution, so they get ρ starts and more
+# precise local fits. MOA-2022-BLG-091, 50 x 49 from scratch, against a converged 8x map: visible points (reference
+# Delta chi2 < 100) worse by > 1 42 % -> 12.5 % (Delta chi2 < 16: 39 % -> 7 %), 2.1x the stage-1 time.
+# The refinement fits every neighbour's solution and the source-size variants of the two best ones (relax_deep:
+# at the boundary of two solution families the better family's solution evaluated at the point is far worse, but
+# its fit converges), deduplicated and with short fits first (relax_dedupe, relax_cheap: 0.5x the CPU of the
+# full fits, same map on Han's photometry of MOA-2022-BLG-091: 57k -> 27k CPU-s, 2.0 % of visible points differ
+# by > 1 either way, none by > 10); residuals capped at 10 sigma in the Nelder-Mead exploration (explore_clip:
+# fits from a neighbour's solution reach the map value 73 % instead of 67 % of the time at equal cost)
+LATTICE = dict(DEFAULT,
+               rho_starts=(-3.5, -4.0, -4.5, -5.0),   # extra starts at these log rho values, each fitted (rho_fit)
+               rho_fit=True,
+               rho_refine=True,                       # refinement: the neighbours' solutions at the other source sizes too
+               relax_deep=True,                       # refinement: fit every neighbour's solution (no one-chi2 pre-check)
+               relax_dedupe=True,                     # ... skipping starts in the basin of one already fitted
+               relax_cheap=True,                      # ... short fits, only the best result polished precisely
+               explore_clip=10.0,                     # Nelder-Mead exploration on residuals capped at 10 sigma (needles)
+               explore_nfev=300,                      # Nelder-Mead exploration before Levenberg-Marquardt (100 stopped early)
+               lm_tol=1e-4,                           # Levenberg-Marquardt to convergence (0.03 left points 1-3 too high)
+               lm_maxit=200)
+
 # backwards-compatible name
 CURRENT = DEFAULT

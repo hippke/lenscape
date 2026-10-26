@@ -156,10 +156,14 @@ def plot_geometry(solutions, labels=None, extent=(-0.3, 0.5, -0.2, 0.2), ncols=2
 BAND_COLORS = ("#ee7600", "gold", "lawngreen", "#7ec0ee", "royalblue")
 
 
-def plot_map(result, bands=None, ax=None, vmax=100.0, cmap="magma_r", colorbar=True, path=None):
-    """Delta chi2 map of a maps.lattice() result (lattice points) or of maps.refine() cells.
+def plot_map(result, bands=None, ax=None, vmax=100.0, cmap="jet_r", colorbar=True, path=None, marks=None,
+             chi2_ref=None):
+    """Delta chi2 map of a maps.lattice() result (lattice points), of maps.refine() cells or of a
+    maps.alpha_profile() result (log s, alpha).
     bands=None: continuous colour scale log10(Delta chi2 + 1) up to vmax; bands=(4, 8, 12, ...): one colour per
-    band Delta chi2 < edge (orange = best, as in many papers), white above the last edge. Returns the axes."""
+    band Delta chi2 < edge (orange = best, as in many papers), white above the last edge.
+    marks: {label: (x, y)} drawn as small crosses with labels (e.g. published solutions).
+    chi2_ref: reference chi2 (default the result's own chi2_ref; pass a common one to compare maps). Returns the axes."""
     import matplotlib.pyplot as plt
     from matplotlib.collections import PatchCollection
     from matplotlib.colors import ListedColormap, BoundaryNorm, Normalize
@@ -174,9 +178,10 @@ def plot_map(result, bands=None, ax=None, vmax=100.0, cmap="magma_r", colorbar=T
         norm = BoundaryNorm(np.arange(len(edges) + 2) - 0.5, len(edges) + 1)
         val = lambda d: np.searchsorted(edges, d, side="right").astype(float)
     cm.set_bad("white")
-    ref = float(result["chi2_ref"])
+    ref = float(result["chi2_ref"] if chi2_ref is None else chi2_ref)
+    profile = "alphas" in result
     if np.ndim(result["chi2"]) == 2:                                  # lattice: (ns, nq) at lattice points
-        ls, lq = result["logs"], result["logq"]
+        ls, lq = result["logs"], (result["alphas"] if profile else result["logq"])
         dls, dlq = ls[1] - ls[0], lq[1] - lq[0]
         im = ax.imshow(np.ma.masked_invalid(val(result["chi2"] - ref)).T, origin="lower", aspect="auto", cmap=cm,
                        norm=norm, interpolation="nearest",
@@ -190,11 +195,16 @@ def plot_map(result, bands=None, ax=None, vmax=100.0, cmap="magma_r", colorbar=T
         ax.set_xlim(np.min(result["logs"] - result["hs"]), np.max(result["logs"] + result["hs"]))
         ax.set_ylim(np.min(result["logq"] - result["hq"]), np.max(result["logq"] + result["hq"]))
     ax.set_xlabel(r"$\log s$")
-    ax.set_ylabel(r"$\log q$")
+    ax.set_ylabel(r"$\alpha$ (rad)" if profile else r"$\log q$")
+    dark = bands is None                                              # continuous scale: dark background
+    for lab, (x, y) in (marks or {}).items():
+        ax.plot(x, y, marker="+", ms=4, mew=0.6, color="white" if dark else "black", zorder=5)
+        ax.annotate(lab, (x, y), xytext=(1.5, 1.5), textcoords="offset points", fontsize=7,
+                    color="white" if dark else "black", zorder=5)
     if colorbar:
         cb = ax.figure.colorbar(im, ax=ax)
         if bands is None:
-            ticks = [t for t in (0, 1, 4, 10, 30, 100, 300, 1000) if t <= vmax]
+            ticks = [0, 4, 20, 100] if vmax == 100 else [t for t in (0, 1, 4, 10, 30, 100, 300, 1000) if t <= vmax]
             cb.set_ticks(np.log10(np.array(ticks) + 1)); cb.set_ticklabels([str(t) for t in ticks])
             cb.set_label(r"$\Delta\chi^2$")
         else:

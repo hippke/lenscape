@@ -25,14 +25,7 @@ def _workers(n):
     return n or max(1, (os.cpu_count() or 2) - 1)
 
 
-def _same_start(y, z):
-    """Two start vectors in the fit coordinates (t0, t_eff, ln tE, alpha, log t_*) that lie in the same basin for
-    any practical purpose: |dt0| < 0.01 tE, |d t_eff| < 2 % + 1e-4 tE, |d ln tE| < 0.02, |d alpha| < 0.02,
-    |d log t_*| < 0.05."""
-    tE = np.exp(0.5 * (y[2] + z[2]))
-    da = abs((y[3] - z[3] + np.pi) % (2 * np.pi) - np.pi)
-    return (abs(y[0] - z[0]) < 0.01 * tE and abs(y[1] - z[1]) < 0.02 * abs(y[1]) + 1e-4 * tE
-            and abs(y[2] - z[2]) < 0.02 and da < 0.02 and abs(y[4] - z[4]) < 0.05)
+_same_start = F.same_start
 
 
 def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=False, c_cut=np.inf):
@@ -73,7 +66,27 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=
             k = int(np.argmin(cv))
             if cv[k] < c0:
                 pre.append((cv[k], vs[k]))
+    if cfg.get("point_screen") and co.kind == "teff" and pre:
+        # valley enumeration at the point: (t0, u0, tE) are pinned by the single-lens part of the light curve, so
+        # the distinct valleys differ in the trajectory angle and the source size. The best start's (t0, t_eff,
+        # ln tE) with cfg["point_screen"] angles x the source-size values, one chi2 each; the best
+        # cfg["point_screen_keep"] (3) outside the basins of the existing starts become extra starts
+        c0, y0 = min(pre, key=lambda v: v[0])
+        ltE = np.log10(np.exp(y0[2]))
+        rhos = [y0[4]] + [lr + ltE for lr in (cfg.get("rho_starts") or ())]
+        cand = [np.r_[y0[:3], a, lr] for a in np.linspace(0, 2 * np.pi, int(cfg["point_screen"]), endpoint=False)
+                for lr in rhos]
+        cand = sorted(((fx(v), v) for v in cand), key=lambda v: v[0])
+        kept = 0
+        for c, v in cand:
+            if kept >= cfg.get("point_screen_keep", 3):
+                break
+            if np.isfinite(c) and not any(_same_start(v, y) for _, y in pre):
+                pre.append((c, v))
+                kept += 1
     gate = cfg.get("lm_gate", 1.0)
+    if cfg.get("rho_fit") and cfg.get("rho_starts"):
+        gate = None                       # the rho variants are to be fitted: no early settling on the interpolated start
     settled = lambda c: gate is not None and c < c_ref + gate and all(c < c0 for c0, _ in pre)
     if lm_start is not None and co.kind == "teff":
         y = co.from_x(np.asarray(lm_start, float))
@@ -92,18 +105,22 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=
             if settled(c):
                 return best
     done = []                                        # starts and results already explored (fit coordinates)
+    found = []                                       # every fit result (chi2, y): the point's solution branches
     order = sorted(pre, key=lambda v: v[0])
     if order and order[0][0] > c_cut:
         order = order[:1]
-    for c, y in order:
+    top = cfg.get("precise_top")             # only the best `top` starts get the (precise) cfg fit; the others a
+    cheap = dict(cfg, explore_nfev=100, lm_tol=0.03, lm_maxit=50)    # short one, and the best result a final polish
+    for rank, (c, y) in enumerate(order):
         if cfg.get("dedupe", True) and any(_same_start(y, z) for z in done):
             continue
         done.append(y.copy())
         if cfg.get("optimizer", "nm") != "nm":
-            c1, y1 = F.local_fit(be, G._DATA, ls, lq, y, cfg, 0.3, 1000)
+            c1, y1 = F.local_fit(be, G._DATA, ls, lq, y, cheap if (top is not None and rank >= top) else cfg, 0.3, 1000)
             if c1 < c:
                 c, y = c1, y1
             done.append(np.asarray(y))
+            found.append((c, np.asarray(y)))
             if c < best[0]:
                 best = (c, co.to_x(y))
             continue
@@ -114,8 +131,18 @@ def _point_from_starts(ls, lq, starts, cfg, lm_start=None, c_ref=np.inf, smooth=
             if r.fun < c:
                 c, y = r.fun, r.x
         done.append(np.asarray(y))
+        found.append((c, np.asarray(y)))
         if c < best[0]:
             best = (c, co.to_x(y))
+    if top is not None and best[1] is not None and cfg.get("optimizer", "nm") != "nm" and co.kind == "teff":
+        c1, y1 = F.local_fit(be, G._DATA, ls, lq, co.from_x(np.asarray(best[1], float)), cfg, 0.1, 1000)
+        if c1 < best[0]:
+            best = (c1, co.to_x(y1))
+            found.append((c1, np.asarray(y1)))
+    if cfg.get("branches"):
+        # multi-branch map: the best cfg["branches"] distinct solutions are kept per point and propagated by the
+        # refinement, so a branch that loses here can still seed the points where it wins
+        return best + ([(c, co.to_x(y)) for c, y in F.top_distinct(found, co, cfg["branches"])],)
     return best
 
 
@@ -218,20 +245,22 @@ def _prepare(data, cfg, best, bin_wings, models=()):
 
 
 def lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=BANDS, seed_grid=2, bin_wings=True,
-            max_sweeps=30, dchi2_cut=5.0, log=print):
+            max_sweeps=30, dchi2_cut=None, log=print):
     """Profile chi2 on the lattice logs x logq (1-D arrays, uniform steps).
     data: Data; best: best-fit vector (t0, u0, tE, log s, log q, alpha, log rho) of the event, used as the start of
     the fits and to bin the far wings (bin_wings); without it, a start is estimated from the data. bands: Delta chi2
     levels whose edges guide the cell refinement. max_sweeps: neighbour-refinement passes (as in densify; a map
     stopped there is not converged and says so). dchi2_cut: in units of the last band edge, points above
     dchi2_cut * bands[-1] over the minimum get one start, no refinement and no outlier search unless a neighbour
-    is below (None: everything everywhere; makes no difference where the whole lattice is inside the bands, large
-    on wide maps). Returns a dict: logs, logq, chi2 (ns, nq), pars (ns, nq, 5:
+    is below (None, the default here: everything everywhere; the cut judges a point by its starts before any fit,
+    which also skipped visible points: MOA-2022-BLG-091 stage 1, points worse by > 1 than a converged map 19 % with
+    the cut, 12.5 % without). cfg: default config.LATTICE (DEFAULT with source-size starts and precise local fits:
+    the fits of a map from scratch start far from the solution). Returns a dict: logs, logq, chi2 (ns, nq), pars (ns, nq, 5:
     t0, u0, tE, alpha, log rho), chi2_ref (lowest chi2 found), cells (stage-1 cell fits), wall-clock times."""
     workers = _workers(workers)
     logs, logq = np.asarray(logs, float), np.asarray(logq, float)
     dls, dlq = logs[1] - logs[0], logq[1] - logq[0]
-    cfg, fitdata = _prepare(data, cfg, best, bin_wings)
+    cfg, fitdata = _prepare(data, C.LATTICE if cfg is None else cfg, best, bin_wings)
     seed = seed_grid if min(len(logs), len(logq)) >= 2 * seed_grid else 0
     ST = G.Stages(5 if seed else 4, log)
     log(f"lattice {len(logs)} x {len(logq)} = {len(logs) * len(logq)} points; N = {len(data.t)}"
@@ -260,13 +289,16 @@ def lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=BANDS, se
     res, _ = G.run_isolated(_point_from_starts, tasks, workers, log=log, desc="lattice point fits")
     chi = np.full((len(logs), len(logq)), np.nan)
     pars = np.full((len(logs), len(logq), 5), np.nan)
+    alts = {} if cfg.get("branches") else None
     for (i, j), v in res.items():
         if v is not None and v[1] is not None:
-            chi[i, j], pars[i, j] = v
+            chi[i, j], pars[i, j] = v[:2]
+            if alts is not None and len(v) > 2:
+                alts[(i, j)] = v[2]
     t2 = time.time()
     ST("Neighbour refinement", "refit points whose neighbours found a better solution")
     chi2, pars2 = G.relax(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, max_sweeps=max_sweeps,
-                          dchi2_cut=cut)
+                          dchi2_cut=cut, alts=alts)
     ST("Recalculate outliers", "deep search for points that are worse than their neighbours")
     chi2, pars2, _ = G.repair_outliers(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10,
                                        dchi2_cut=cut)

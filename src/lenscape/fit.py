@@ -264,7 +264,8 @@ def lm_jacobian(be, data, ls, lq, co, h=LM_STEP):
     return jac
 
 
-def nm_then_lm(f, fr, y0, sim, n_explore, h=LM_STEP, cap=LM_CAP, lm_tol=1e-3, fatol=1e-2, jac=None):
+def nm_then_lm(f, fr, y0, sim, n_explore, h=LM_STEP, cap=LM_CAP, lm_tol=1e-3, fatol=1e-2, jac=None, lm_maxit=50,
+               f_true=None):
     """A short Nelder-Mead exploration from y0 (initial simplex sim, or the default simplex if None; n_explore
     evaluations, stopping at fatol) to reach the right valley, then Levenberg-Marquardt on the residual vector fr
     to converge (from distant starts LM alone stops in a nearer minimum; it stops when a step gains less than
@@ -273,12 +274,49 @@ def nm_then_lm(f, fr, y0, sim, n_explore, h=LM_STEP, cap=LM_CAP, lm_tol=1e-3, fa
     if sim is not None:
         opts["initial_simplex"] = sim
     r = minimize(f, y0, method="Nelder-Mead", options=opts)
-    q = least_squares_lm(fr, r.x, h, cap, tol=lm_tol, jac=jac)
+    if f_true is not None:              # f was a smoothed chi2 for the exploration: the true value at its result
+        r.fun = f_true(r.x)
+        f = f_true
+    q = least_squares_lm(fr, r.x, h, cap, tol=lm_tol, jac=jac, maxit=lm_maxit)
     if q.fun < r.fun or not np.isfinite(r.fun):
         c = f(q.x)                      # chi2 itself (binned data: the residuals' sum of squares omits a constant)
         if c < r.fun:
             return c, q.x
     return r.fun, r.x
+
+
+def same_start(y, z):
+    """Two start vectors in the fit coordinates (t0, t_eff, ln tE, alpha, log t_*) that lie in the same basin for
+    any practical purpose: |dt0| < 0.01 tE, |d t_eff| < 2 % + 1e-4 tE, |d ln tE| < 0.02, |d alpha| < 0.02,
+    |d log t_*| < 0.05."""
+    tE = np.exp(0.5 * (y[2] + z[2]))
+    da = abs((y[3] - z[3] + np.pi) % (2 * np.pi) - np.pi)
+    return (abs(y[0] - z[0]) < 0.01 * tE and abs(y[1] - z[1]) < 0.02 * abs(y[1]) + 1e-4 * tE
+            and abs(y[2] - z[2]) < 0.02 and da < 0.02 and abs(y[4] - z[4]) < 0.05)
+
+
+def same_branch(c, y, c2, z):
+    """Two solutions of the same branch for the branch bookkeeping: same_start, or equal within 1 in chi2 with
+    (t0, t_eff, ln tE, alpha) within twice the same_start tolerances (log t_* is free where the source is
+    unresolved, so refits of one basin scatter in it)."""
+    if same_start(y, z):
+        return True
+    tE = np.exp(0.5 * (y[2] + z[2]))
+    da = abs((y[3] - z[3] + np.pi) % (2 * np.pi) - np.pi)
+    return (abs(c - c2) < 1.0 and abs(y[0] - z[0]) < 0.02 * tE and abs(y[1] - z[1]) < 0.04 * abs(y[1]) + 2e-4 * tE
+            and abs(y[2] - z[2]) < 0.04 and da < 0.04)
+
+
+def top_distinct(found, co, k):
+    """The k lowest-chi2 solutions of found [(chi2, y in fit coordinates)] that lie in distinct basins (same_start):
+    a point's solution branches, kept so that a branch losing here can still be the start elsewhere."""
+    out = []
+    for c, y in sorted(found, key=lambda v: v[0]):
+        if np.isfinite(c) and not any(same_start(y, z) for _, z in out):
+            out.append((float(c), np.asarray(y, float)))
+            if len(out) >= k:
+                break
+    return out
 
 
 def local_fit(be, data, ls, lq, y0, cfg, step, maxfev):
@@ -298,8 +336,25 @@ def local_fit(be, data, ls, lq, y0, cfg, step, maxfev):
     fr = lambda y: model.chi2_residuals(be, np.asarray(full_p(co.to_x(y), ls, lq), float), data)
     sim = None if step is None else np.vstack([y0] + [y0 + np.eye(5)[k] * st for k, st in enumerate(co.steps(y0, step))])
     jac = lm_jacobian(be, data, ls, lq, co) if cfg.get("lm_jac", "fd") == "analytic" else None
-    return nm_then_lm(f, fr, y0, sim, min(maxfev, cfg.get("explore_nfev", 100)), lm_tol=cfg.get("lm_tol", 1e-3),
-                      fatol=fatol, jac=jac)
+    fe = f
+    if cfg.get("explore_clip") or cfg.get("explore_rho_floor") is not None:
+        # smoothed chi2 for the Nelder-Mead exploration only: an unresolved source makes needles in the surface
+        # wherever a data point sits on a fold caustic (width ~rho, height 10x the surroundings). explore_clip:
+        # residuals capped at this many sigma (a Huber-like loss; a valley never has such residuals);
+        # explore_rho_floor: log rho floored at this value (the physical smoothing: a larger source)
+        clip, floor = cfg.get("explore_clip"), cfg.get("explore_rho_floor")
+
+        def fe(y):
+            y = np.array(y, float)
+            if floor is not None:
+                y[4] = max(y[4], floor + np.log10(np.exp(y[2])))     # y[4] = log t_* = log rho + log tE
+            if clip:
+                r = fr(y)
+                return float(np.sum(np.minimum(r * r, clip * clip)))
+            return f(y)
+        fe.coords = co
+    return nm_then_lm(fe, fr, y0, sim, min(maxfev, cfg.get("explore_nfev", 100)), lm_tol=cfg.get("lm_tol", 1e-3),
+                      fatol=fatol, jac=jac, lm_maxit=cfg.get("lm_maxit", 50), f_true=f)
 
 
 def _to_refine(trials, cfg):
@@ -440,6 +495,16 @@ def fit_point_box(box, data, cfg, warm=None):
             us = _logit((w[5] - s_lo) / (s_hi - s_lo))
             uq = _logit((w[6] - q_lo) / (q_hi - q_lo))
             starts.append(np.r_[co.from_x(w[:5]), us, uq])
+    if cfg.get("rho_cells") and cfg.get("rho_starts") and co.kind == "teff":
+        # the two best warm starts (chi2 at the cell centre) also at their best other source size
+        ws = [w for w in (warm or []) if w is not None and np.all(np.isfinite(w))]
+        ws = sorted(ws, key=lambda w: fx(np.asarray(w[:5], float)))[:2]
+        for w in ws:
+            var = [np.r_[w[:4], lr] for lr in cfg["rho_starts"]]
+            v = min(var, key=lambda x: fx(x))
+            us = _logit((w[5] - s_lo) / (s_hi - s_lo))
+            uq = _logit((w[6] - q_lo) / (q_hi - q_lo))
+            starts.append(np.r_[co.from_x(v), us, uq])
     trials = []
     for y0 in starts:
         r = nm(y0, cfg.get("n_explore_box", 300), None)
