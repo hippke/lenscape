@@ -10,4 +10,6 @@ dist/
 !tests/data/*.npz
 !notebooks/data/*.npz
 bench/farfield_out/
-notebooks/data/tutorial_*.npz
+notebooks/data/tutorial_map_2x.npz
+notebooks/data/tutorial_map_4x.npz
+notebooks/data/tutorial_alpha_*.npz

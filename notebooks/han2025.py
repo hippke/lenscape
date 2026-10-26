@@ -3,8 +3,8 @@
 The paper (A&A, arXiv:2505.22951) does not publish its photometry. Its light-curve figures (Fig. 1, Fig. 5) are
 vector graphics: every plotted point and error bar is stored with its position. We read them (lenscape.eps), map
 device units to time and magnitude with the frames and tick marks of each panel, and add the public KMTNet points
-outside the plotted window (lenscape.datasets.kmtnet), mapped onto the paper's flux scale. Nothing derived from the
-paper is stored in this repository; it is rebuilt here from the paper's own source files.
+outside the plotted window (lenscape.datasets.kmtnet), mapped onto the paper's flux scale. The result is stored in
+notebooks/data/*_photometry.csv for the notebooks; this module rebuilds it from the paper's own source files.
 """
 import os
 import numpy as np
@@ -158,38 +158,44 @@ def plot_two_panels(backend, models, data, zoom, overall, ref, title="", ylim_zo
     return fig
 
 
-def compare_maps(paper_left, paper_right, ours, cell, alpha_height, xlim, qlim, alim, title=""):
-    """Figs. 2 / 6: the paper's map (redrawn from its vector graphics) next to lenscape's, both in the paper's
-    colour bands, in the (log s, log q) and (log s, alpha) planes. ours: dict with logs, logq, chi2, chi2_ref, alpha
-    (alpha of the best fit at every lattice point). cell = (d log s, d log q) of the lattice."""
+def compare_maps(paper_left, paper_right, lattice, profile, cell, alpha_height, xlim, qlim, alim, marks=None,
+                 title=""):
+    """Figs. 2 / 6 in the style of the lenscape research note: 2 x 2 panels, (a, c) the paper's map redrawn from its
+    vector graphics in its colour bands, (b, d) lenscape's on a continuous scale (log Delta chi2 up to 100):
+    (a, b) log s - log q, (c, d) log s - alpha, (d) the alpha profile (chi2 minimised over all other parameters).
+    lattice: maps.lattice() result; profile: maps.alpha_profile() result; cell = (d log s, d log q) of the paper's
+    lattice; marks: {label: (s, q, alpha)} published solutions, drawn as small crosses in all panels."""
     import matplotlib.pyplot as plt
     from matplotlib.collections import PatchCollection
-    from lenscape.figures import BAND_COLORS
-    fig, axs = plt.subplots(1, 4, figsize=(15, 4.6), sharex=True)
+    from lenscape.figures import BAND_COLORS, plot_map
+    fig, axs = plt.subplots(2, 2, figsize=(9.5, 8), sharex=True)
+    (pq, oq), (pa, oa) = axs
 
     def cells(ax, pts, w, h):
         for b in range(5, 0, -1):
             sel = [(x, y) for x, y, bb in pts if bb == b]
-            pc = PatchCollection([plt.Rectangle((x - 0.51 * w, y - 0.51 * h), 1.02 * w, 1.02 * h) for x, y in sel],
-                                 facecolor=BAND_COLORS[b - 1], lw=0)
-            ax.add_collection(pc)
+            ax.add_collection(PatchCollection([plt.Rectangle((x - 0.51 * w, y - 0.51 * h), 1.02 * w, 1.02 * h)
+                                               for x, y in sel], facecolor=BAND_COLORS[b - 1], lw=0))
 
-    d = ours["chi2"] - ours["chi2_ref"]
-    band = np.searchsorted(np.asarray(BANDS), d, side="right") + 1
-    LS = np.repeat(ours["logs"][:, None], len(ours["logq"]), 1)
-    LQ = np.repeat(ours["logq"][None, :], len(ours["logs"]), 0)
-    mine = np.c_[LS.ravel(), LQ.ravel(), band.ravel()]
-    mine_a = np.c_[LS.ravel(), ours["alpha"].ravel(), band.ravel()]
-    cells(axs[0], paper_left, *cell)
-    cells(axs[1], [r for r in mine if r[2] <= 5], *cell)
-    cells(axs[2], paper_right, cell[0], alpha_height)
-    cells(axs[3], [r for r in mine_a if r[2] <= 5], cell[0], alpha_height)
-    for a, t in zip(axs, ("Han et al. 2025", "lenscape", "Han et al. 2025", "lenscape")):
-        a.set_title(t); a.set_xlim(*xlim); a.set_xlabel("log s")
-    for a in axs[:2]:
-        a.set_ylim(*qlim); a.set_ylabel("log q")
-    for a in axs[2:]:
-        a.set_ylim(*alim); a.set_ylabel("alpha (rad)")
-    fig.suptitle(title + f"  (bands: dchi2 < {', '.join(f'{b:g}' for b in BANDS)}; orange = best)")
-    fig.tight_layout()
+    ref = min(float(lattice["chi2_ref"]), float(np.nanmin(profile["chi2"])))
+    mq = {k: (np.log10(s), np.log10(q)) for k, (s, q, a) in (marks or {}).items()}
+    ma = {k: (np.log10(s), a) for k, (s, q, a) in (marks or {}).items()}
+    cells(pq, paper_left, *cell)
+    cells(pa, paper_right, cell[0], alpha_height)
+    for a, m in ((pq, mq), (pa, ma)):
+        for lab, (x, y) in m.items():
+            a.plot(x, y, marker="+", ms=4, mew=0.6, color="black", zorder=5)
+            a.annotate(lab, (x, y), xytext=(1.5, 1.5), textcoords="offset points", fontsize=7, zorder=5)
+    plot_map(lattice, ax=oq, marks=mq, chi2_ref=ref, colorbar=False)
+    plot_map(profile, ax=oa, marks=ma, chi2_ref=ref, colorbar=False)
+    for a, t in zip((pq, oq, pa, oa), ("(a) Han et al. 2025", "(b) lenscape", "(c) Han et al. 2025", "(d) lenscape")):
+        a.set_title(t, fontsize=10)
+        a.set_xlim(*xlim)
+    for a in (pq, oq):
+        a.set_ylim(*qlim); a.set_ylabel("log q"); a.set_xlabel("")
+    for a in (pa, oa):
+        a.set_ylim(*alim); a.set_ylabel("alpha (rad)"); a.set_xlabel("log s")
+    fig.colorbar(oa.images[0], ax=axs, ticks=np.log10(np.array([0, 4, 20, 100]) + 1), shrink=0.8,
+                 label="lenscape: Delta chi2 (b, d)").set_ticklabels(["0", "4", "20", "100"])
+    fig.suptitle(title + f"   (a, c: bands Delta chi2 < {', '.join(f'{b:g}' for b in BANDS)}, red to blue)", fontsize=10)
     return fig
