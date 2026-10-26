@@ -4,6 +4,9 @@
 
 First public version.
 
+- Fix: `fit.Coords.from_x` added 0.001 d to tE (a guard against tE <= 0), so every start was displaced by 0.001 d
+  on each coordinate round trip and a solution in a narrow minimum was lost (2x densify of MOA-2022-BLG-091:
+  10 % of the points coincident with the 1x lattice came out 1-3 above it); now a floor.
 - Stage-1 refinement (`config.LATTICE`): every neighbour's solution and the source-size variants of the two best
   neighbours are fitted (`relax_deep`; the one-chi2 pre-check rejected the better family's solution at family
   boundaries, where it evaluates far worse but its fit converges), starts in one basin are fitted once

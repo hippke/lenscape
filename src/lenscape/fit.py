@@ -189,8 +189,8 @@ class Coords:
         if self.kind == "native":
             return np.asarray(x)
         t0, u0, tE, al, lr = x
-        tE = abs(tE) + 1e-3
-        return np.array([t0, u0 * tE, np.log(tE), al, lr + np.log10(tE)])
+        tE = max(abs(tE), 1e-3)        # (abs(tE) + 1e-3 shifted every start by 0.001 d: a solution in a narrow
+        return np.array([t0, u0 * tE, np.log(tE), al, lr + np.log10(tE)])   # minimum was lost on the round trip)
 
     def steps(self, y, scale):
         if self.kind == "native":
