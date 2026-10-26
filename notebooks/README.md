@@ -16,6 +16,7 @@ Data are downloaded on first use from the public KMTNet archive and cached in `~
 | `09_physical_parameters` | source radius, Einstein radius, proper motion | 1 s |
 | `10_caustic_crossings` | fits from rough starts with caustic-crossing starting points (simulated event, MOA-2022-BLG-091) | 1 min |
 | `han2025_figures` | Han et al. (2025) Figures 1–7 redrawn with lenscape (`han2025.py` rebuilds the data) | 30 s |
+| `tutorial_first_map_research_note` | for first-time users: from the photometry file `data/moa091_photometry.csv` to the research note's map (50 × 49 lattice, 2× and 4× densify) with all defaults | 45 min |
 
 \* Measured on a 16-core AMD Ryzen 9 7950X, data already downloaded; the first notebook also compiles the
 kernels (about 2 minutes, cached afterwards).
