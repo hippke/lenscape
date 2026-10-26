@@ -61,5 +61,11 @@ LATTICE = dict(DEFAULT,
                lm_tol=1e-4,                           # Levenberg-Marquardt to convergence (0.03 left points 1-3 too high)
                lm_maxit=200)
 
+# densify() and polish() (points started from known solutions): the LATTICE settings without the source-size starts,
+# which cost 3x there for the last few points. Han's photometry of MOA-2022-BLG-091, 2x densify of the 50 x 49 map on a
+# 7950X: DEFAULT 168 s (20 % of visible points improvable by > 1, 14 worse than the LATTICE map by > 5), DENSIFY 488 s
+# (2 %, 5 points), LATTICE 1520 s (1 %)
+DENSIFY = dict(LATTICE, rho_starts=None, rho_fit=False)
+
 # backwards-compatible name
 CURRENT = DEFAULT

@@ -108,6 +108,8 @@ cell). Returns the leaves as a dict of arrays: `logs`, `logq` (cell centres), `h
 `x` (best fit: t0, u0, tE, alpha, log rho, log s, log q), `level`, `chi2_ref`, `nfit`, `wall`.
 
 ### `densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_starts=3, max_sweeps=30, dchi2_cut=5.0)`
+
+`cfg` defaults to `config.DENSIFY` (the `LATTICE` settings without the source-size starts; `polish` likewise).
 A (finer) lattice started from known solutions: every point is fitted from the nearest solutions of `previous`
 (a list of `lattice`, `refine` or `densify` results; the nearest one is always included), then neighbour refinement
 and outlier recalculation. No seed grid and no cell fits: a 2× finer map of a 50 × 49 lattice (9603 points) took

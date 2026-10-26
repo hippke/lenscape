@@ -357,11 +357,12 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
     (s, q fixed) from the n_starts nearest solutions of `previous` (a list of lattice(), refine() or densify()
     results), then neighbour refinement and outlier recalculation as in lattice(). No seed grid and no cell fits,
     so a 2x finer lattice costs about 4x the lattice-point stage of the original map rather than a new map.
-    dchi2_cut: as in lattice(), in units of BANDS[-1] = 100. Returns a dict like lattice() (without "cells")."""
+    dchi2_cut: as in lattice(), in units of BANDS[-1] = 100. cfg: default config.DENSIFY (the LATTICE settings
+    without the source-size starts). Returns a dict like lattice() (without "cells")."""
     workers = _workers(workers)
     logs, logq = np.asarray(logs, float), np.asarray(logq, float)
     known = _known_solutions(previous)
-    cfg, fitdata = _prepare(data, cfg, best, bin_wings,
+    cfg, fitdata = _prepare(data, C.DENSIFY if cfg is None else cfg, best, bin_wings,
                             _check_models([(np.array([x[0], x[1], x[2], a, b, x[3], x[4]]), c) for a, b, c, x in known], best)
                             if best is not None else ())
     interp = bool(cfg.get("interp_start", True))
@@ -422,7 +423,7 @@ def polish(result, data, previous=(), best=None, cfg=None, workers=None, max_swe
     recalculation. Returns a new result dict."""
     workers = _workers(workers)
     known = _known_solutions([result] + list(previous))
-    cfg, fitdata = _prepare(data, cfg, best, bin_wings,
+    cfg, fitdata = _prepare(data, C.DENSIFY if cfg is None else cfg, best, bin_wings,
                             _check_models([(np.array([x[0], x[1], x[2], a, b, x[3], x[4]]), c) for a, b, c, x in known], best)
                             if best is not None else ())
     logs, logq = result["logs"], result["logq"]

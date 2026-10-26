@@ -4,6 +4,10 @@
 
 First public version.
 
+- `densify()` and `polish()` default to `config.DENSIFY`: the `LATTICE` settings (precise fits, deep deduplicated
+  cheap-then-polish refinement, clipped exploration) without the source-size starts. Han's photometry of
+  MOA-2022-BLG-091, 2x densify on a 7950X: `DEFAULT` 168 s (20 % of visible points improvable by > 1, 14 points
+  worse than the full-settings map by > 5), `DENSIFY` 488 s (2 %, 5 points), `LATTICE` 1520 s (1 %).
 - Fix: `fit.Coords.from_x` added 0.001 d to tE (a guard against tE <= 0), so every start was displaced by 0.001 d
   on each coordinate round trip and a solution in a narrow minimum was lost (2x densify of MOA-2022-BLG-091:
   10 % of the points coincident with the 1x lattice came out 1-3 above it); now a floor.
