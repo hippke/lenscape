@@ -52,7 +52,7 @@ KMTNet pySIS files (columns HJD, flux, flux error, …) → `Data`. `paths` is a
 per file, named after the file up to the first `_` (`KMTC22_I.pysis` → `KMTC22`). `t_offset` is subtracted from
 HJD; `window = (t1, t2)` on the shifted axis.
 
-### `read_text(path, cols=(0, 1, 2), t_offset=0.0, mag=False, zp=22.0, comments="#")`
+### `read_text(path, cols=(0, 1, 2), t_offset=0.0, mag=False, zp=22.0, comments="#", **kw)`
 `(t, flux, flux_err)` from a text file with columns `cols = (time, value, error)`. With `mag=True`, value and error
 are magnitudes and are converted with flux = 10^(−0.4 (mag − zp)). Combine several files with `Data.from_sets`.
 
@@ -72,7 +72,7 @@ functions pass their `best` as the model (`bin_wings=True`).
 
 ## `lenscape.maps` — Δχ² maps
 
-### `lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=(4, 16, 36, 64, 100), seed_grid=2, bin_wings=True, max_sweeps=30, dchi2_cut=5.0, log=print)`
+### `lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=(4, 16, 36, 64, 100), seed_grid=2, bin_wings=True, max_sweeps=30, dchi2_cut=None, log=print)`
 Profile χ² at every point of the lattice `logs × logq` (1-D arrays with uniform steps): s and q fixed, the other
 parameters fitted. Runs in stages (cell fits from a coarse seed grid, lattice-point fits, neighbour refinement,
 outlier recalculation; see [method.md](method.md)), each with a numbered header and a progress bar.
@@ -107,13 +107,13 @@ size). Starts from `result = lattice(...)`. Each cell holds the best fit anywher
 cell). Returns the leaves as a dict of arrays: `logs`, `logq` (cell centres), `hs`, `hq` (half widths), `chi2`,
 `x` (best fit: t0, u0, tE, alpha, log rho, log s, log q), `level`, `chi2_ref`, `nfit`, `wall`.
 
-### `densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_starts=3, max_sweeps=30, dchi2_cut=5.0)`
+### `densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_starts=3, bin_wings=True, max_sweeps=30, dchi2_cut=5.0, log=print)`
 
 `cfg` defaults to `config.DENSIFY` (the `LATTICE` settings without the source-size starts; `polish` likewise).
 A (finer) lattice started from known solutions: every point is fitted from the nearest solutions of `previous`
 (a list of `lattice`, `refine` or `densify` results; the nearest one is always included), then neighbour refinement
-and outlier recalculation. No seed grid and no cell fits: a 2× finer map of a 50 × 49 lattice (9603 points) took
-27 minutes on a 16-core desktop CPU.
+and outlier recalculation. No seed grid and no cell fits: for MOA-2022-BLG-091 (research note), the 2×, 4× and 8× densifications of
+the 50 × 50 map took 8, 23 and 74 minutes on a 16-core desktop CPU.
 
 ### `multilevel(data, logs, logq, best=None, cfg=None, workers=None, levels=1, bands=(4, 16, 36, 64, 100), bin_wings=True, log=print)`
 `lattice()` on every 2^levels-th point of the lattice, then `densify()` level by level to the full lattice: the
@@ -122,19 +122,21 @@ valleys of the map; from a 5 × 5 coarse lattice a 17 × 17 test block ended wor
 50 × 49 paper lattice the 8× map of the research note is the same route by hand. `len(logs) − 1` and
 `len(logq) − 1` must be multiples of 2^levels.
 
-### `polish(result, data, previous=(), best=None, cfg=None, workers=None, max_sweeps=30, dchi2_cut=5.0)`
+### `polish(result, data, previous=(), best=None, cfg=None, workers=None, max_sweeps=30, bin_wings=True, dchi2_cut=5.0, log=print)`
 Improves a result: at points shared with `previous` lattices it keeps the better solution, then runs neighbour
 refinement and outlier recalculation again.
 
-### `alpha_minima(result, data, best=None, cfg=None, workers=None, n_alpha=20, tol_alpha=0.02)`
+### `alpha_minima(result, data, best=None, cfg=None, workers=None, n_alpha=20, tol_alpha=0.02, bin_wings=True, log=print)`
 All local minima in the trajectory angle at every lattice point (fits from `n_alpha` angles, distinct minima kept):
 rows of (log s, log q, χ², t0, u0, tE, α, log ρ). This is how (log s, α) maps are usually drawn.
 
-### `alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=None, n_starts=3, margin=1.0, max_sweeps=30, changed_only=True)`
+### `alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=None, n_starts=3, margin=1.0, max_sweeps=30, bin_wings=True, log=print, changed_only=True, u0_ref=None, smooth=None, one_sign=False)`
 Profile χ² over (log s, α): at every grid point χ² minimised over all other parameters including log q, so the map
 has a value everywhere. Started from the nearest known solutions of `previous` (lattices, cells, `alpha_minima`
-rows), then neighbour refinement (α periodic). Returns `dict(logs, alphas, chi2 (ns, na), pars (ns, na, 7),
-chi2_ref, wall)`.
+rows), then neighbour refinement (α periodic). Solutions with the opposite sign of u0 to `u0_ref` are counted at
+α + π. `u0_ref`: default that of an `alpha_profile` result in `previous`, else of the best known solution (pass it
+when `previous` holds solutions of both signs). `smooth`: as `cfg["smooth"]` (the default). Returns
+`dict(logs, alphas, chi2 (ns, na), pars (ns, na, 7), chi2_ref, wall, u0_ref, one_sign)`.
 
 **Neighbour refinement** (in `lattice`, `densify`, `polish`, `alpha_profile`): every point whose neighbourhood
 changed is a task; a result that improves a point by more than the margin (1) makes its eight neighbours stale, and
@@ -152,8 +154,9 @@ passes, or the refits of one point in queue mode.
 (e.g. Han et al. 2025). Without it every solution also appears mirrored about α = 3π/2; that map equals
 min(f(α), f(3π − α)) of the one-sign map, so it never needs its own computation.
 
-### `alpha_profile_refine(result, data, best=None, cfg=None, workers=None, margin=1.0, max_sweeps=30)`
-More neighbour-refinement passes for an `alpha_profile` result, e.g. one stopped at `max_sweeps`. Neighbours'
+### `alpha_profile_refine(result, data, best=None, cfg=None, workers=None, margin=1.0, max_sweeps=30, bin_wings=True, log=print, changed_only=True, smooth=None, one_sign=None)`
+More neighbour-refinement passes for an `alpha_profile` result, e.g. one stopped at `max_sweeps` (`one_sign`: default that of
+the result). Neighbours'
 solutions of either sign of u0 are tried, each at its own model α. The lowest-χ² neighbour of each sign is always fitted at rough
 points and where it beats the point by more than `cfg["profile_step"]` (10): across a step its solution evaluates
 far worse before the refit, and a one-χ² pre-check would never fit it (the staircase edges of earlier maps). Each
@@ -291,18 +294,22 @@ Options of the maps. `optimizer="nm_lm"`, `smooth=0.2`, `interp_start`, `lm_gate
 
 ## `lenscape.figures` — figures (matplotlib)
 
-### `plot_lightcurve(backend, solutions, data, labels=None, window=None, insets=(), ref=0, zp=22.0, t_offset=0.0, colors=..., path=None, xlabel="HJD - 2450000", res_lim=0.3)`
+### `plot_lightcurve(backend, solutions, data, labels=None, window=None, insets=(), ref=0, zp=22.0, t_offset=0.0, colors=..., n_model=4000, figsize=(7.0, 7.5), path=None, xlabel="HJD - 2450000", res_lim=0.3)`
 Data and model light curves of several solutions in magnitudes, zoom `insets = [(t1, t2), ...]`, and one residual
 panel per solution. All data sets are put on the magnitude scale of set `ref` with each solution's own fluxes.
-`colors`: a sequence by data-set index or `{name: colour}`. Returns the matplotlib figure; saves it to `path`.
+`colors`: a sequence by data-set index or `{name: colour}`. `n_model`: points of the model curves. Returns the matplotlib figure; saves it to `path`.
 
-### `plot_geometry(solutions, labels=None, extent=(-0.3, 0.5, -0.2, 0.2), ncols=2, mirror=False, centre="primary", levels=None, path=None)`
+### `plot_geometry(solutions, labels=None, extent=(-0.3, 0.5, -0.2, 0.2), ncols=2, mirror=False, centre="primary", levels=None, figsize=None, path=None, t_arrow=None)`
 One panel per solution: caustics, source trajectory with direction arrow, lens positions and equal-magnification
-contours. `centre="primary"` puts the origin at the primary, `"com"` at the centre of mass.
+contours. `centre="primary"` puts the origin at the primary, `"com"` at the centre of mass. `mirror=True` reflects
+y (the (u0, α) → (−u0, −α) symmetry; some papers draw the source above the axis). `t_arrow`: time of the direction
+arrow (default t0).
 
-### `plot_map(result, bands=None, ax=None, vmax=100.0, cmap="magma_r", colorbar=True, path=None)`
-Δχ² map of a `lattice()` result or of `refine()` cells: continuous (log scale up to `vmax`) or, with
-`bands=(4, 16, 36, ...)`, in colour bands (orange = best, white above the last edge).
+### `plot_map(result, bands=None, ax=None, vmax=100.0, cmap="jet_r", colorbar=True, path=None, marks=None, chi2_ref=None)`
+Δχ² map of a `lattice()` result, of `refine()` cells or of an `alpha_profile()` result: continuous (log scale up to
+`vmax`) or, with `bands=(4, 16, 36, ...)`, in colour bands (orange = best, white above the last edge).
+`marks={label: (x, y)}` draws labelled crosses (e.g. published solutions). `chi2_ref`: the reference χ² (default
+the result's own; pass a common one to compare maps).
 
 ### `aligned(backend, p, data, ref=0, zp=22.0)`, `model_mag(backend, p, t, fs_ref, fb_ref, zp=22.0)`
 Data magnitudes on a common scale and model magnitudes, for your own plots: `aligned` returns

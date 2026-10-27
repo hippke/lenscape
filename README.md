@@ -21,6 +21,12 @@ on a 16-core desktop computer (AMD Ryzen 9 7950X): 14 minutes for the 50 × 50 l
 for the 100 × 100, 200 × 200 and 400 × 400 refinements. It recovers the event's four published solutions and
 their χ² to within 1.
 
+<img alt="Published and lenscape maps of MOA-2022-BLG-091" src="docs/fig1_grid_8x.png" width="600">
+
+*MOA-2022-BLG-091. (a, c) The published 50 × 50 maps (Han et al. 2025, Fig. 2), in bands of Δχ² < 4, 8, 12, 16
+and 20. (b, d) The continuous Δχ² surfaces of `lenscape` at 400 × 400. Top: the (log s, log q) plane. Bottom: the
+trajectory angle α against log s, with χ² minimised over all other parameters, including q, at every point.*
+
 ## Why it is fast
 
 - **Compiled magnifications.** Pure Python, compiled with numba. Point-source magnifications use the root solver of
@@ -89,5 +95,4 @@ All my repositories embrace collaboration between humans and AI. Contributions a
 
 ## Citing
 
-If you use `lenscape`, please cite the accompanying research note (in preparation) and the papers of the methods
-it builds on (see [docs/method.md](docs/method.md)). See `CITATION.cff`.
+If you use `lenscape`, please cite the accompanying research note (in preparation). See `CITATION.cff`.

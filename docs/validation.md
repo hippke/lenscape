@@ -23,9 +23,18 @@ suite; the other rows are.
 
 ## A published map: MOA-2022-BLG-091
 
-Han et al. (2025, A&A, arXiv:2505.22951) report four degenerate planetary solutions of MOA-2022-BLG-091 and a Δχ²
-map on a 50 × 49 lattice. Their photometry is not public, so the comparison used the data points shown in their
-light-curve figure (716 points) plus the public KMTNet baseline (2531 points in total).
+Han et al. (2025, A&A, arXiv:2505.22951) report four degenerate planetary solutions of MOA-2022-BLG-091 and Δχ²
+maps on a 50 × 50 lattice, over (log s, log q) and over (log s, α).
+
+**With the paper's photometry** (the authors' KMTNet and MOA data, 1728 points, not public; the research note and
+the figure in the README), `lenscape` recovers the four solutions and the published best-fit χ² to within 1
+(Sol B: 1726.3 against 1726.7), and the maps have the published shape. On an AMD Ryzen 9 7950X (16 cores), the
+50 × 50 lattice took 14 minutes, and the 100 × 100, 200 × 200 and 400 × 400 densifications 8, 23 and 74 minutes:
+119 minutes for the 400 × 400 map.
+
+**With public data only**, the comparison uses the data points shown in the paper's light-curve figure (716 points)
+plus the public KMTNet baseline (2531 points in total); `notebooks/tutorial_first_map_research_note.ipynb`
+computes this map.
 
 **Solutions.** Started from the published parameters, lenscape finds all four solutions with the same ranking:
 
@@ -42,4 +51,3 @@ For each solution, the source trajectory enters the caustic at HJD′ 9655.27–
 **Map.** On the paper's lattice, the shape of the allowed region, the best-fit region and the four solutions agree;
 66 % of the paper's coloured lattice points lie within one Δχ² band of lenscape's (89 % if the band edges are read
 as (kn)² instead of kn²). The outer bands of lenscape's map are steeper, as expected from the longer baseline.
-The full map took 98 minutes on a six-core desktop CPU (AMD Ryzen 5 3600, 12 threads).

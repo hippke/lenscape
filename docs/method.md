@@ -12,8 +12,8 @@ moving on a straight line (impact parameter *u*₀, angle *α*, time of closest 
 All magnification code is lenscape's own, compiled with numba; VBBinaryLensing is used only in the tests, as a
 reference.
 
-1. **Point source.** The lens equation is solved as a fifth-order polynomial, as in VBBinaryLensing
-   (Bozza 2010; Bozza et al. 2018), with the roots of the previous point as starting values: Newton on each root,
+1. **Point source.** The lens equation is solved as a fifth-order polynomial, as in VBBinaryLensing and its
+   successor VBMicrolensing (Bozza 2010; Bozza et al. 2018), with the roots of the previous point as starting values: Newton on each root,
    the five roots stepped together so that the processor overlaps their independent dependency chains (the solve is
    latency-bound: 222 → 151 ns per point on a Ryzen 7950X, 1.23× on a light curve, identical results), and
    Ehrlich–Aberth where a root does not converge. For independent points without a warm start
@@ -23,7 +23,7 @@ reference.
    deflating the quintic, and the set is accepted only when it is complete (three distinct converged images with
    parities +, −, −, two deflated roots that are not images), so it is exact for any (s, q) and falls back
    otherwise (2.5–6× faster than Aberth from fresh starts; `nbmag.FARFIELD` enables it for light curves, where it
-   is speed-neutral). Details and measurements: `RESEARCH_point_source_results.md`, scripts in `bench/`.
+   is speed-neutral; measurement script in `bench/`).
 2. **Near caustics.** The quadrupole test of VBBinaryLensing decides whether the point source is good enough. If
    not, lenscape tries the quadrupole (analytic, from derivatives already computed for the test) and the
    hexadecapole approximation (Gould 2008; Pejcha & Heyrovský 2009; Cassan 2017), evaluated on images tracked from
@@ -39,8 +39,15 @@ integration split at the kinks of the integrand.
 
 The fit parameters are *t*₀, *t*<sub>eff</sub> = *u*₀*t*<sub>E</sub>, ln *t*<sub>E</sub>, *α* and
 log *t*<sub>⋆</sub> = log *ρt*<sub>E</sub>: the timescales a light curve measures directly. In these coordinates
-the narrow curved valleys of the likelihood become straighter, and Nelder–Mead converges faster and more often.
-Each fit evaluates χ² at 20 trajectory angles and refines the best four.
+the narrow curved valleys of the likelihood become straighter. The source and blend fluxes are solved linearly in
+every χ² evaluation (see Model), so only these five parameters are searched.
+
+A local fit is a short Nelder–Mead exploration that finds the valley floor, followed by Levenberg–Marquardt steps
+on the residual vector to the minimum (`optimizer="nm_lm"`). In the exploration of a map from scratch
+(`config.LATTICE`), each residual is capped at 10σ: a point-like source on a fold caustic makes needle-like χ²
+spikes that would otherwise trap the simplex. Levenberg–Marquardt and every reported χ² use the exact likelihood.
+A fit without a warm start evaluates χ² at 20 trajectory angles and refines the best four; fits inside a map
+mostly start from their neighbours' solutions instead.
 
 ## Maps
 
@@ -51,16 +58,38 @@ Each fit evaluates χ² at 20 trajectory angles and refines the best four.
    cell (through a sigmoid). A narrow valley that passes between two lattice points still shows up. After the
    fits, every cell is offered its neighbours' solutions: one χ² evaluation decides whether a refit is worthwhile.
 3. **Lattice-point fits** at fixed (*s*, *q*), started from the best cell solutions within one cell.
-4. **Neighbour refinement.** Every point is refitted from its neighbours' solutions, in sweeps, until no point
-   improves by more than 1. After the first sweep only points next to a point that changed are checked: the others
-   would repeat a refit with unchanged inputs (identical result, fewer refits).
+4. **Neighbour refinement.** Every point is refitted from its neighbours' solutions until no point improves by
+   more than 1. Improvements are queued and spread as soon as their fits finish; only points next to a point that
+   changed are checked again. The neighbours' solutions are also tried at other source sizes: resolved and
+   unresolved sources form separate minima (basins of attraction), and both branches must be able to spread.
 5. **Outlier recalculation.** A point whose χ² exceeds both neighbours along an axis by more than 8 is a stuck fit
    in practice; it gets a deep search from about 1000 starts plus its neighbours' solutions.
 
-`maps.refine` continues from the cells of stage 2: where a Δχ² band edge runs between neighbouring cells, the cells
+## Finer maps
+
+`maps.densify` builds a finer lattice from a coarser one, usually by halving the step. Every new point starts from
+the nearest known solutions. On a lattice refined by 2, a start interpolated from the equally nearest solutions is
+tried first with Levenberg–Marquardt alone; if its χ² is consistent with its neighbours', the point is settled.
+Otherwise the nearest solutions are fitted. Neighbour refinement and outlier recalculation follow as in
+`lattice`. There are no seed grid and no cell fits, so each doubling costs a fraction of a new map
+(`maps.multilevel` runs the whole route).
+
+`maps.refine` continues from the cells of stage 2 instead: where a Δχ² band edge runs between neighbouring cells, the cells
 are split 2 × 2 and fitted again, `levels` times.
 
-**Why the stages matter.** Fits started cold at every lattice point often end in local minima. On a test map
+## The trajectory angle
+
+`maps.alpha_minima` finds every local minimum in α at each lattice point. `maps.alpha_profile` computes the
+profile over (log *s*, *α*) with *q* free: started from the nearest known solutions, then neighbour refinement
+with α periodic. In the profile refinement, the best neighbour solution of each sign of *u*₀ is always fitted
+where it beats a point by more than 10, together with its branch extrapolated linearly to the point. If neither
+wins, the solution is followed to the point in 16 short sub-steps: narrow small-source branches on the flanks of
+the map are otherwise lost at a step of one grid point. With `one_sign=True`, solutions of the other sign of *u*₀
+are mirrored, so each solution appears once.
+
+## Why the stages matter
+
+Fits started cold at every lattice point often end in local minima. On a test map
 (KMT-2025-BLG-0121), neighbour starts lowered χ² by more than 1 at 64 % of the points and doubled the area inside
 the displayed Δχ² bands. The seed grid together with the one-evaluation refit test is 6 times cheaper than
 refitting every cell from all neighbours.
