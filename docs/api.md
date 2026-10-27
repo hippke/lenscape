@@ -154,7 +154,9 @@ min(f(α), f(3π − α)) of the one-sign map, so it never needs its own computa
 
 ### `alpha_profile_refine(result, data, best=None, cfg=None, workers=None, margin=1.0, max_sweeps=30)`
 More neighbour-refinement passes for an `alpha_profile` result, e.g. one stopped at `max_sweeps`. Neighbours'
-solutions of either sign of u0 are tried, each at its own model α.
+solutions of either sign of u0 are tried, each at its own model α. The lowest-χ² neighbour of each sign is always fitted at rough
+points and where it beats the point by more than `cfg["profile_step"]` (10): across a step its solution evaluates
+far worse before the refit, and a one-χ² pre-check would never fit it (the staircase edges of earlier maps).
 
 ---
 

@@ -38,6 +38,7 @@ DEFAULT = dict(
     profile_optimizer="nm",        # (log s, alpha) profile fits: Nelder-Mead ("nm_lm" is faster but weaker there)
     profile_interp=False,          # profile stage 1: LM alone from an interpolated start first (settles points too early at fixed alpha)
     profile_dedupe=True,           # profile stage 1: skip starts in the basin of one already fitted (-9 % CPU, same quality)
+    profile_step=10.0,             # profile refinement: always fit the best neighbour (per u0 sign) when it beats a point by more
 )
 
 # Stage 1 (maps.lattice() from scratch): the fits there start far from the solution, so they get ρ starts and more

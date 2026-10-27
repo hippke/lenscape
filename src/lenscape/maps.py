@@ -518,20 +518,24 @@ SA_LM_STEP = np.array([1e-4, 1e-5, 1e-4, 1e-4, 1e-3])
 SA_LM_CAP = np.array([0.3, 0.05, 0.1, 0.05, 0.2])
 
 
-def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0, top=None):
+def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0, top=None, always=0):
     """Best fit at fixed (log s, alpha) from 7-vector starts (their log s and alpha are replaced). cand/cval: in
     refinement sweeps, refit only if a start already beats cval - margin with one chi2 evaluation. top: fit only
     the `top` starts with the lowest chi2 at the point (forced refits of rough points: all of up to eight were
-    fitted before)."""
+    fitted before). always: the first `always` starts are fitted whatever their chi2 at the point (on a step edge
+    the better neighbour's solution evaluates hundreds above the point before it is refit, and the two filters
+    above would never fit it)."""
     be = F.make_backend(cfg["grid_backend"])
     als = np.broadcast_to(np.asarray(al, float), (len(starts),))    # model alpha per start (u0 signs may differ)
     ys = [(_sa_coords(np.asarray(s, float)), a) for s, a in zip(starts, als)]
     if cand is not None or top is not None:
+        must, ys = ys[:always], ys[always:]
         c0 = [M.chi2(be, _sa_vector(y, ls, a), G._DATA) for y, a in ys]
         if cand is not None:
             ys = [v for v, c in zip(ys, c0) if c < cval - margin]
         else:
             ys = [v for _, v in sorted(zip(c0, ys), key=lambda z: z[0])[:top]]
+        ys = must + ys
         if not ys:
             return (np.inf, None)                      # nothing to refit (None is reserved for a lost task)
     best = (np.inf, None)
@@ -628,9 +632,25 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
     of neighbours better by > margin, each at its own model alpha (a neighbour with the other sign of u0 is fitted
     at alpha - pi or alpha + pi, so solutions of both signs spread). cfg["relax_mode"] "queue" (default): the
     asynchronous engine grid.refine_queue (improvements spread as fast as the fits finish); "sweeps": Jacobi sweeps
-    with a barrier each (changed_only: re-check only points next to a change)."""
+    with a barrier each (changed_only: re-check only points next to a change).
+    The lowest-chi2 neighbour of each sign of u0 is always fitted at forced (rough) points, and at other points
+    when it beats the point by more than cfg["profile_step"] (default 10): across a step its solution evaluates
+    hundreds above the point before the refit, so the one-evaluation filters (cand, top) never fitted it
+    (MOA-2022-BLG-091 8x profile on Han's data: 1 242 steps > 20 in alpha, 88 % of those at a u0 sign boundary
+    closed by a refit from the better neighbour)."""
     model_alpha = lambda p, al: al if np.sign(p[1]) == np.sign(u0_ref) else al - np.pi
     smooth = cfg.get("smooth") if smooth is None else smooth
+    step = cfg.get("profile_step", 10.0)
+
+    def ordered(keys, chi, pars, cv, forced):
+        """Neighbour solutions with the must-fit ones first (lowest chi2 per sign of u0) and their count."""
+        low = {}
+        for k in keys:
+            sg = np.sign(pars[k][1])
+            if sg not in low or chi[k] < chi[low[sg]]:
+                low[sg] = k
+        must = sorted((k for k in low.values() if forced or cv - chi[k] > step), key=lambda k: chi[k])
+        return [pars[k] for k in must + [k for k in keys if k not in must]], len(must)
     ns, na = chi.shape
     # alpha is periodic only if the grid covers the full circle (a partial range, e.g. 3.6 .. 5.6, has two edges)
     wrap = na > 1 and (alphas[-1] - alphas[0]) + (alphas[1] - alphas[0]) >= 2 * np.pi - 1e-9
@@ -640,17 +660,19 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
         def make_args(i, j, chi, pars, forced):
             nb = [(i + a, (j + b) % na) for a in (-1, 0, 1) for b in (-1, 0, 1)
                   if (a or b) and 0 <= i + a < ns and (wrap or 0 <= j + b < na)]
-            if forced:
-                cand = [pars[k] for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k])) and ok_sign(pars[k])]
-                if not cand:
-                    return None
-                return (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg, None, np.inf, margin, 3)
-            cand = [pars[k] for k in nb if np.isfinite(chi[k]) and (not np.isfinite(chi[i, j])
-                                                                    or chi[k] < chi[i, j] - margin) and ok_sign(pars[k])]
-            if not cand:
-                return None
             cv = float(chi[i, j]) if np.isfinite(chi[i, j]) else np.inf
-            return (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg, True, cv, margin)
+            if forced:
+                keys = [k for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k])) and ok_sign(pars[k])]
+                if not keys:
+                    return None
+                cand, n = ordered(keys, chi, pars, cv, True)
+                return (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg, None, np.inf, margin, 3, n)
+            keys = [k for k in nb if np.isfinite(chi[k]) and (not np.isfinite(chi[i, j])
+                                                              or chi[k] < chi[i, j] - margin) and ok_sign(pars[k])]
+            if not keys:
+                return None
+            cand, n = ordered(keys, chi, pars, cv, False)
+            return (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg, True, cv, margin, None, n)
 
         return G.refine_queue(chi, pars, _sa_fit, make_args, workers, margin, log, "neighbour refinement",
                               wrap_j=wrap, smooth=smooth, max_refits=max_sweeps)
@@ -669,20 +691,22 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
                     continue
                 nb = [(i + a, (j + b) % na) for a in (-1, 0, 1) for b in (-1, 0, 1)
                       if (a or b) and 0 <= i + a < ns and (wrap or 0 <= j + b < na)]
+                cv = float(chi[i, j]) if np.isfinite(chi[i, j]) else np.inf
                 if force[i, j]:                         # outlier: refit from all neighbours, no pre-check
-                    cand = [pars[k] for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k]))
+                    keys = [k for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k]))
                             and (not one_sign or np.sign(pars[k][1]) == np.sign(u0_ref))]
-                    if cand:
+                    if keys:
+                        cand, n = ordered(keys, chi, pars, cv, True)
                         tasks[(i, j)] = (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg,
-                                         None, np.inf, margin, 3)
+                                         None, np.inf, margin, 3, n)
                     continue
-                cand = [pars[k] for k in nb if np.isfinite(chi[k]) and (not np.isfinite(chi[i, j])
-                                                                        or chi[k] < chi[i, j] - margin)
+                keys = [k for k in nb if np.isfinite(chi[k]) and (not np.isfinite(chi[i, j])
+                                                                  or chi[k] < chi[i, j] - margin)
                         and (not one_sign or np.sign(pars[k][1]) == np.sign(u0_ref))]
-                if cand:
+                if keys:
+                    cand, n = ordered(keys, chi, pars, cv, False)
                     als = [model_alpha(c, alphas[j]) for c in cand]
-                    cv = float(chi[i, j]) if np.isfinite(chi[i, j]) else np.inf
-                    tasks[(i, j)] = (float(logs[i]), als, cand, cfg, True, cv, margin)
+                    tasks[(i, j)] = (float(logs[i]), als, cand, cfg, True, cv, margin, None, n)
         if not tasks:
             break
         res, _ = G.run_isolated(_sa_fit, tasks, workers, log=log, desc=f"neighbour refinement, pass {sweep + 1}")

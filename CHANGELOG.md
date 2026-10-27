@@ -4,6 +4,14 @@
 
 First public version.
 
+- Fix: the (log s, alpha) profile refinement never fitted the better neighbour across a step. Since rough points
+  were limited to the three neighbour solutions with the lowest chi2 at the point (49880b5), and other points
+  were pre-checked the same way, the better neighbour's solution, which evaluates hundreds above the point before
+  it is refit, was never fitted (rank ~6 of 8). Now the lowest-chi2 neighbour of each sign of u0 is always fitted
+  at rough points, and elsewhere when it beats the point by more than `cfg["profile_step"]` (10). Han's photometry
+  of MOA-2022-BLG-091, 8x profile, 200 x 201 block of the upper-left arm: the old refinement changes nothing (26
+  points by > 1), the fixed one improves 3 719 points by > 1 (1 853 by > 10, max 157, none worse) and removes the
+  staircase edges (steps > 20 along log s 232 -> 94), at 4x the CPU of the old pass.
 - `densify()` and `polish()` default to `config.DENSIFY`: the `LATTICE` settings (precise fits, deep deduplicated
   cheap-then-polish refinement, clipped exploration) without the source-size starts. Han's photometry of
   MOA-2022-BLG-091, 2x densify on a 7950X: `DEFAULT` 168 s (20 % of visible points improvable by > 1, 14 points
