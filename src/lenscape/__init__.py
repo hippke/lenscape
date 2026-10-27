@@ -41,7 +41,7 @@ def _numba_cache_dir():
 if not _os.environ.get("NUMBA_CACHE_DIR"):
     _numba_cache_dir()
 
-__version__ = "0.1.0"
+__version__ = "1.0"
 
 from . import config, data, model, fit, grid, amr, maps, caustics, figures, single, lightcurve, mcmc, source, datasets, eps, optimize, khgrid  # noqa: E402
 from .data import Data, read_pysis, read_text                                                              # noqa: E402

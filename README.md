@@ -1,6 +1,6 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/logo/lenscape-banner-dark.svg">
-  <img alt="lenscape" src="docs/logo/lenscape-banner.svg" width="600">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/hippke/lenscape/main/docs/logo/lenscape-banner-dark.svg">
+  <img alt="lenscape" src="https://raw.githubusercontent.com/hippke/lenscape/main/docs/logo/lenscape-banner.svg" width="600">
 </picture>
 
 # lenscape
@@ -21,7 +21,7 @@ on a 16-core desktop computer (AMD Ryzen 9 7950X): 14 minutes for the 50 × 50 l
 for the 100 × 100, 200 × 200 and 400 × 400 refinements. It recovers the event's four published solutions and
 their χ² to within 1.
 
-<img alt="Published and lenscape maps of MOA-2022-BLG-091" src="docs/fig1_grid_8x.png" width="600">
+<img alt="Published and lenscape maps of MOA-2022-BLG-091" src="https://raw.githubusercontent.com/hippke/lenscape/main/docs/fig1_grid_8x.png" width="600">
 
 *MOA-2022-BLG-091. (a, c) The published 50 × 50 maps (Han et al. 2025, Fig. 2), in bands of Δχ² < 4, 8, 12, 16
 and 20. (b, d) The continuous Δχ² surfaces of `lenscape` at 400 × 400. Top: the (log s, log q) plane. Bottom: the
@@ -79,15 +79,15 @@ call compiles the kernels (about a minute); they are cached on disk afterwards.
 
 ## Examples
 
-The [example notebooks](notebooks) run from public data to finished maps and figures. Start with the
-[quickstart](notebooks/01_quickstart.ipynb); [tutorial_first_map_research_note](notebooks/tutorial_first_map_research_note.ipynb)
+The [example notebooks](https://github.com/hippke/lenscape/tree/main/notebooks) run from public data to finished maps and figures. Start with the
+[quickstart](https://github.com/hippke/lenscape/blob/main/notebooks/01_quickstart.ipynb); [tutorial_first_map_research_note](https://github.com/hippke/lenscape/blob/main/notebooks/tutorial_first_map_research_note.ipynb)
 computes the map of the research note step by step.
 
 ## Documentation
 
-- [Method](docs/method.md): magnifications, fits, the stages of a map, accuracy.
-- [API reference](docs/api.md): all public functions.
-- [Validation](docs/validation.md): comparisons with VBBinaryLensing and with a published map.
+- [Method](https://github.com/hippke/lenscape/blob/main/docs/method.md): magnifications, fits, the stages of a map, accuracy.
+- [API reference](https://github.com/hippke/lenscape/blob/main/docs/api.md): all public functions.
+- [Validation](https://github.com/hippke/lenscape/blob/main/docs/validation.md): comparisons with VBBinaryLensing and with a published map.
 
 ## Contributing
 
@@ -95,4 +95,4 @@ All my repositories embrace collaboration between humans and AI. Contributions a
 
 ## Citing
 
-If you use `lenscape`, please cite the accompanying research note (in preparation). See `CITATION.cff`.
+If you use `lenscape`, please cite the accompanying research note (in preparation). See [`CITATION.cff`](https://github.com/hippke/lenscape/blob/main/CITATION.cff).
