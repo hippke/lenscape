@@ -156,7 +156,10 @@ min(f(α), f(3π − α)) of the one-sign map, so it never needs its own computa
 More neighbour-refinement passes for an `alpha_profile` result, e.g. one stopped at `max_sweeps`. Neighbours'
 solutions of either sign of u0 are tried, each at its own model α. The lowest-χ² neighbour of each sign is always fitted at rough
 points and where it beats the point by more than `cfg["profile_step"]` (10): across a step its solution evaluates
-far worse before the refit, and a one-χ² pre-check would never fit it (the staircase edges of earlier maps).
+far worse before the refit, and a one-χ² pre-check would never fit it (the staircase edges of earlier maps). Each
+such neighbour is also tried at its tangent prediction (its branch extrapolated linearly from the next point beyond
+it), and if no fit beats the point, its solution is continued to the point in `cfg["profile_continuation"]` (16)
+sub-steps of short fits (0 turns this off).
 
 ---
 

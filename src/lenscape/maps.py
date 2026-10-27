@@ -518,14 +518,31 @@ SA_LM_STEP = np.array([1e-4, 1e-5, 1e-4, 1e-4, 1e-3])
 SA_LM_CAP = np.array([0.3, 0.05, 0.1, 0.05, 0.2])
 
 
-def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0, top=None, always=0):
+def _sa_continue(be, ls0, al0, ls1, al1, y, K):
+    """Continuation of a solution y (fit coordinates) from (log s, model alpha) = (ls0, al0) to (ls1, al1) in K
+    sub-steps, a short Nelder-Mead fit at each: follows a branch too narrow for a fit started a full step away."""
+    da = (al1 - al0 + np.pi) % (2 * np.pi) - np.pi
+    for t in np.linspace(1.0 / K, 1.0, K):
+        l_t, a_t = ls0 + t * (ls1 - ls0), al0 + t * da
+        f = lambda v: M.chi2(be, _sa_vector(v, l_t, a_t), G._DATA)
+        st = np.array([0.05, 0.1 * abs(y[1]) + 1e-3, 0.1, 0.1, 0.1]) * 0.1
+        sim = np.vstack([y] + [y + np.eye(5)[k] * st[k] for k in range(5)])
+        r = minimize(f, y, method="Nelder-Mead", options=dict(maxfev=800, adaptive=True, initial_simplex=sim, fatol=1e-3))
+        y = r.x
+    return r.fun, y
+
+
+def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0, top=None, always=0, cont=None):
     """Best fit at fixed (log s, alpha) from 7-vector starts (their log s and alpha are replaced). cand/cval: in
     refinement sweeps, refit only if a start already beats cval - margin with one chi2 evaluation. top: fit only
     the `top` starts with the lowest chi2 at the point (forced refits of rough points: all of up to eight were
     fitted before). always: the first `always` starts are fitted whatever their chi2 at the point (on a step edge
     the better neighbour's solution evaluates hundreds above the point before it is refit, and the two filters
-    above would never fit it)."""
+    above would never fit it). cont: the point's own chi2 when starts[0] is a neighbour better by more than
+    cfg["profile_step"]; if no fit beats it, starts[0] is continued to the point in cfg["profile_continuation"]
+    sub-steps (_sa_continue)."""
     be = F.make_backend(cfg["grid_backend"])
+    first = np.asarray(starts[0], float) if len(starts) else None
     als = np.broadcast_to(np.asarray(al, float), (len(starts),))    # model alpha per start (u0 signs may differ)
     ys = [(_sa_coords(np.asarray(s, float)), a) for s, a in zip(starts, als)]
     if cand is not None or top is not None:
@@ -543,6 +560,12 @@ def _sa_fit(ls, al, starts, cfg, cand=None, cval=np.inf, margin=1.0, top=None, a
         c, y1 = _sa_fit_one(be, ls, al, y, cfg)
         if c < best[0]:
             best = (c, _sa_vector(y1, ls, al))
+    K = int(cfg.get("profile_continuation", 16))
+    if cont is not None and K > 0 and first is not None and not best[0] < cont - margin:
+        a1 = float(als[0])
+        c, y1 = _sa_continue(be, float(first[3]), float(first[5]), ls, a1, _sa_coords(first), K)
+        if c < best[0]:
+            best = (c, _sa_vector(y1, ls, a1))
     return best
 
 
@@ -642,15 +665,32 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
     smooth = cfg.get("smooth") if smooth is None else smooth
     step = cfg.get("profile_step", 10.0)
 
-    def ordered(keys, chi, pars, cv, forced):
-        """Neighbour solutions with the must-fit ones first (lowest chi2 per sign of u0) and their count."""
+    def ordered(keys, chi, pars, cv, forced, i, j, tangent=True):
+        """Neighbour solutions with the must-fit ones first (lowest chi2 per sign of u0, each followed by its tangent
+        prediction) and their count. tangent=False in the sweeps engine: the prediction depends on points two steps
+        away, which its changed_only bookkeeping does not track."""
         low = {}
         for k in keys:
             sg = np.sign(pars[k][1])
             if sg not in low or chi[k] < chi[low[sg]]:
                 low[sg] = k
         must = sorted((k for k in low.values() if forced or cv - chi[k] > step), key=lambda k: chi[k])
-        return [pars[k] for k in must + [k for k in keys if k not in must]], len(must)
+        first = []
+        for k in must:
+            first.append(pars[k])
+            if not tangent:
+                continue
+            # tangent predictor: the neighbour's branch extrapolated linearly from the next point beyond it in the
+            # same direction (the small-source branch of a flank is too narrow for a fit from the neighbour's own
+            # solution one step away: Han's 8x profile, upper-left arm, 12 % -> 65 % of its staircase edges)
+            di, dj = k[0] - i, (k[1] - j + na // 2) % na - na // 2 if wrap else k[1] - j
+            k2 = (k[0] + di, (k[1] + dj) % na if wrap else k[1] + dj)
+            if 0 <= k2[0] < ns and 0 <= k2[1] < na and np.isfinite(chi[k2]) and np.all(np.isfinite(pars[k2])) \
+                    and np.sign(pars[k2][1]) == np.sign(pars[k][1]):
+                pt = _sa_vector(2 * _sa_coords(pars[k]) - _sa_coords(pars[k2]), pars[k][3], pars[k][5])
+                if np.all(np.isfinite(pt)) and np.sign(pt[1]) == np.sign(pars[k][1]):
+                    first.append(pt)
+        return first + [pars[k] for k in keys if k not in must], len(first)
     ns, na = chi.shape
     # alpha is periodic only if the grid covers the full circle (a partial range, e.g. 3.6 .. 5.6, has two edges)
     wrap = na > 1 and (alphas[-1] - alphas[0]) + (alphas[1] - alphas[0]) >= 2 * np.pi - 1e-9
@@ -665,14 +705,16 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
                 keys = [k for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k])) and ok_sign(pars[k])]
                 if not keys:
                     return None
-                cand, n = ordered(keys, chi, pars, cv, True)
-                return (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg, None, np.inf, margin, 3, n)
+                cand, n = ordered(keys, chi, pars, cv, True, i, j)
+                return (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg, None, np.inf, margin, 3, n,
+                        cv if cv - min(chi[k] for k in keys) > step else None)
             keys = [k for k in nb if np.isfinite(chi[k]) and (not np.isfinite(chi[i, j])
                                                               or chi[k] < chi[i, j] - margin) and ok_sign(pars[k])]
             if not keys:
                 return None
-            cand, n = ordered(keys, chi, pars, cv, False)
-            return (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg, True, cv, margin, None, n)
+            cand, n = ordered(keys, chi, pars, cv, False, i, j)
+            return (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg, True, cv, margin, None, n,
+                    cv if cv - min(chi[k] for k in keys) > step else None)
 
         return G.refine_queue(chi, pars, _sa_fit, make_args, workers, margin, log, "neighbour refinement",
                               wrap_j=wrap, smooth=smooth, max_refits=max_sweeps)
@@ -696,7 +738,7 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
                     keys = [k for k in nb if np.isfinite(chi[k]) and np.all(np.isfinite(pars[k]))
                             and (not one_sign or np.sign(pars[k][1]) == np.sign(u0_ref))]
                     if keys:
-                        cand, n = ordered(keys, chi, pars, cv, True)
+                        cand, n = ordered(keys, chi, pars, cv, True, i, j, False)
                         tasks[(i, j)] = (float(logs[i]), [model_alpha(c, alphas[j]) for c in cand], cand, cfg,
                                          None, np.inf, margin, 3, n)
                     continue
@@ -704,7 +746,7 @@ def _alpha_sweeps(chi, pars, logs, alphas, u0_ref, cfg, workers, margin, max_swe
                                                                   or chi[k] < chi[i, j] - margin)
                         and (not one_sign or np.sign(pars[k][1]) == np.sign(u0_ref))]
                 if keys:
-                    cand, n = ordered(keys, chi, pars, cv, False)
+                    cand, n = ordered(keys, chi, pars, cv, False, i, j, False)
                     als = [model_alpha(c, alphas[j]) for c in cand]
                     tasks[(i, j)] = (float(logs[i]), als, cand, cfg, True, cv, margin, None, n)
         if not tasks:

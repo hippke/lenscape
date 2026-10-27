@@ -10,8 +10,14 @@ First public version.
   it is refit, was never fitted (rank ~6 of 8). Now the lowest-chi2 neighbour of each sign of u0 is always fitted
   at rough points, and elsewhere when it beats the point by more than `cfg["profile_step"]` (10). Han's photometry
   of MOA-2022-BLG-091, 8x profile, 200 x 201 block of the upper-left arm: the old refinement changes nothing (26
-  points by > 1), the fixed one improves 3 719 points by > 1 (1 853 by > 10, max 157, none worse) and removes the
-  staircase edges (steps > 20 along log s 232 -> 94), at 4x the CPU of the old pass.
+  points by > 1). Two more starts for the narrow small-source branch of a flank, which a fit from the neighbour's
+  solution one full step away reaches at only 12 % of the edges: each must-fit neighbour is followed by its
+  tangent prediction (its branch extrapolated linearly from the next point beyond it), and if still no fit beats
+  the point, the neighbour's solution is continued to the point in `cfg["profile_continuation"]` (16) sub-steps.
+  The block then improves by 5 969 points by > 1 (2 873 by > 10, max 157, none worse); steps > 20 along log s
+  232 -> 49, along alpha 372 -> 249. The staircase on the upper flank becomes a straight edge, and fine scans
+  across 16 of the remaining edges show the small-source branch ending there in 13 (3 still miss it by 9-12).
+  Cost in this block (the worst region): 10x the CPU of the old pass (13k -> 130k CPU-s).
 - `densify()` and `polish()` default to `config.DENSIFY`: the `LATTICE` settings (precise fits, deep deduplicated
   cheap-then-polish refinement, clipped exploration) without the source-size starts. Han's photometry of
   MOA-2022-BLG-091, 2x densify on a 7950X: `DEFAULT` 168 s (20 % of visible points improvable by > 1, 14 points
