@@ -5,118 +5,77 @@
 
 # lenscape
 
-**Fast and complete Δχ² maps of binary-lens microlensing events.**
+**Fast, high-resolution Δχ² maps of binary-lens microlensing events.**
 
-Planetary microlensing papers find and present degenerate solutions with Δχ² maps over the binary-lens
-separation *s* and mass ratio *q*. At every point of such a map, the remaining parameters are fitted to the light
-curve, with finite-source magnifications near the caustics. These maps are among the most expensive steps of an
-analysis.
+Planetary microlensing light curves often admit several degenerate binary-lens interpretations. To find them,
+analyses compute Δχ² maps over the binary-lens separation *s* and mass ratio *q*: at every point of the map, the
+remaining parameters (*t*<sub>0</sub>, *u*<sub>0</sub>, *t*<sub>E</sub>, *α*, *ρ*) are fitted to the light curve,
+with finite-source magnifications near the caustics. These maps decide how many solutions an analysis reports and
+how wide its mass-ratio constraints are, and they are often the most expensive step of the modelling. Standard
+analyses therefore use coarse grids of independent point-by-point fits, which get stuck in local minima.
 
-`lenscape` computes them about **20 times faster** than a pipeline built on VBBinaryLensing, and uses the speed
-for a more **complete** search: fits start from their neighbours' solutions, cells are fitted with *s* and *q* free
-inside them, and the map is refined along the Δχ² contours. A full map of a published planetary event
-(50 × 49 points, 2531 data points) takes 98 minutes on a six-core desktop computer.
+`lenscape` is an open-source Python package that computes these maps quickly and suppresses local-minimum
+artefacts with staged neighbour propagation and adaptive refinement. For the planetary event MOA-2022-BLG-091,
+it reproduces the published 50 × 50 map in **14 minutes** and computes a **400 × 400** map in **under two hours**
+on a 16-core desktop computer (AMD Ryzen 9 7950X): 14 minutes for the 50 × 50 lattice, then 8, 23 and 74 minutes
+for the 100 × 100, 200 × 200 and 400 × 400 refinements. It recovers the event's four published solutions and
+their χ² to within 1.
 
 ## Why it is fast
 
-- **Own magnification code, compiled with numba.** Point-source magnifications follow VBBinaryLensing
-  (Bozza 2010; Bozza et al. 2018). Near caustics, `lenscape` uses quadrupole and hexadecapole approximations
-  (Gould 2008; Pejcha & Heyrovský 2009; Cassan 2017) on images tracked from point to point, and its own contour
-  integration only where these fail. Light curves are about 5 times faster than with VBBinaryLensing, at
-  better accuracy (table below).
+- **Compiled magnifications.** Pure Python, compiled with numba. Point-source magnifications use the root solver of
+  VBMicrolensing (Bozza 2010; Bozza et al. 2018; Skowron & Gould 2012). Near caustics, quadrupole and hexadecapole
+  approximations (Gould 2008; Pejcha & Heyrovský 2009; Cassan 2017) are evaluated on images tracked from the
+  point-source roots; full contour integration is reserved for sources on or inside a caustic.
+- **Fluxes solved, not searched.** The source and blend fluxes of every data set are solved by linear least
+  squares at each step, so the fits search only the nonlinear parameters.
 - **Fits in the timescales a light curve measures.** The fits use *t*<sub>eff</sub> = *u*<sub>0</sub>*t*<sub>E</sub>
-  and *t*<sub>⋆</sub> = *ρt*<sub>E</sub> instead of *u*<sub>0</sub> and *ρ*, which straightens the narrow curved
-  valleys of the likelihood. Each fit screens 20 trajectory angles and refines the best few.
-- **One process per fit, on all cores.** A fit that fails cannot take a map down with it.
-
-Light curves, 1000 points, five binary-lens configurations, one thread (`benchmarks/benchmark.py`; errors against
-VBBinaryLensing at Tol = 10⁻⁵; AMD Ryzen 9 7950X, idle):
-
-| | VBBinaryLensing (Tol 10⁻³) | lenscape (tight settings) | speed-up |
-|---|---|---|---|
-| total time, 5 light curves | 21.6 ms | 4.6 ms | **4.7×** |
-| largest relative error | 1.4 × 10⁻⁴ | 1.0 × 10⁻⁴ | |
-
-Maps (per lattice point, including the fits):
-
-| | VBBinaryLensing + Nelder–Mead | lenscape |
-|---|---|---|
-| CPU time per lattice point | 42 s | **≈ 2 s** |
-| full 50 × 49 map (MOA-2022-BLG-091, 2531 data points) | — | **98 min on 6 cores** |
+  and *t*<sub>⋆</sub> = *ρt*<sub>E</sub>, which straightens the narrow curved valleys of the likelihood. A short
+  Nelder–Mead search finds the valley floor, and Levenberg–Marquardt steps converge to the minimum.
+- **Warm starts from the neighbours.** Most fits start from the solutions of neighbouring cells and lattice points,
+  near their minimum, instead of from a sweep over trajectory angles.
+- **Hierarchical densification.** Fine maps are built from coarser ones: each new point starts from the solutions
+  around it, so doubling the resolution costs a fraction of a new map. Refinement can be restricted to the cells
+  that a Δχ² contour runs through.
 
 ## Why it is complete
 
-Fitting every lattice point independently leaves many fits in local minima. In tests, starting from the
-neighbours' solutions **doubled the allowed region** of a map. `lenscape` computes a map in stages:
+Fitting every lattice point independently leaves many fits in local minima and gives speckled maps. `lenscape`
+computes a map in stages:
 
 1. **Cell fits.** The best fit anywhere inside each lattice cell (*s* and *q* free within the cell), so that a
-   narrow valley between two lattice points is not missed. A coarse seed grid provides starting points.
+   narrow valley between two lattice points is not missed. A coarse seed grid provides starting points, and
+   neighbouring cells exchange their solutions.
 2. **Lattice-point fits** at fixed (*s*, *q*), started from the cell solutions nearby.
-3. **Neighbour refinement.** Points are refitted from their neighbours' solutions until none improves.
+3. **Neighbour refinement.** Solutions propagate from point to point, for both the resolved and the unresolved
+   source branch, until no point improves by more than 1.
 4. **Outlier recalculation.** Points worse than their neighbours get a deep search with many starts.
-5. **Finer cells** (optional) where a Δχ² band edge runs between cells, so contours are resolved without refining
-   the whole map.
+5. **Densification** (optional) to finer lattices, or **finer cells** only where a Δχ² band edge runs between
+   cells.
 
-Each stage prints a numbered header and a progress bar.
+The same stages at fixed (log *s*, *α*), with *q* free, give the profile of the trajectory angle. Each stage
+prints a numbered header and a progress bar.
 
 ## Installation
+
+```bash
+pip install lenscape
+```
+
+Latest development version:
 
 ```bash
 pip install git+https://github.com/hippke/lenscape
 ```
 
-Requirements: Python ≥ 3.10, NumPy, numba, tqdm; matplotlib for figures. The first call compiles the
-kernels (about a minute); they are cached on disk afterwards.
+Requirements: Python ≥ 3.10, NumPy, numba, tqdm; matplotlib for figures (`pip install lenscape[plot]`). The first
+call compiles the kernels (about a minute); they are cached on disk afterwards.
 
-## Usage
+## Examples
 
-```python
-import numpy as np
-import lenscape
-
-# KMTNet pySIS files (HJD, flux, flux error, ...); one data set per file, time axis HJD - 2450000
-data = lenscape.read_pysis("KMT-2022-BLG-0114/*_I.pysis", window=(9600, 9720))
-
-# a best fit of the event: (t0, u0, tE, log s, log q, alpha, log rho)
-best = np.array([9657.77, -0.0254, 35.5, 0.0020, -2.398, 4.41, -3.3])
-
-# Delta chi2 map on a (log s, log q) lattice, then finer cells along the band edges
-logs = np.linspace(-0.010, 0.016, 50)
-logq = np.linspace(-2.6, -2.0, 49)
-result = lenscape.lattice(data, logs, logq, best=best)
-cells = lenscape.refine(result, data, levels=2, best=best)
-
-dchi2 = result["chi2"] - result["chi2_ref"]          # (50, 49), Delta chi2 at every lattice point
-```
-
-Figures of the solutions:
-
-```python
-from lenscape import figures, make_backend, config
-
-backend = make_backend(config.REFINE_BACKEND)
-figures.plot_lightcurve(backend, [best], data, window=(9652, 9663), insets=[(9655.0, 9655.5)],
-                        path="lightcurve.png")
-figures.plot_geometry([best], path="geometry.png")    # caustics, trajectory, magnification contours
-```
-
-## Tutorials
-
-Jupyter notebooks in [`notebooks/`](notebooks), each runnable in minutes:
-
-| notebook | content |
-|---|---|
-| [01 Quickstart](notebooks/01_quickstart.ipynb) | public data → fit → map → figures |
-| [02 Data](notebooks/02_data.ipynb) | loading, cuts, error bars, outliers |
-| [03 Magnifications](notebooks/03_magnification.ipynb) | backends, finite source, limb darkening, accuracy |
-| [04 Caustics](notebooks/04_caustics.ipynb) | caustic topologies, magnification maps, geometry plots |
-| [05 Fitting](notebooks/05_fitting.ipynb) | fits at fixed (s, q), full fits, cell fits, light-curve figures |
-| [06 Maps](notebooks/06_maps.ipynb) | Δχ² maps step by step, refinement, the trajectory angle |
-| [07 Higher order](notebooks/07_higher_order.ipynb) | parallax, orbital motion, binary sources |
-| [08 MCMC](notebooks/08_mcmc.ipynb) | posteriors |
-| [09 Physical parameters](notebooks/09_physical_parameters.ipynb) | source radius, Einstein radius, proper motion |
-| [10 Caustic crossings](notebooks/10_caustic_crossings.ipynb) | starting points from the caustic entry and exit times |
-| [Han et al. 2025](notebooks/han2025_figures.ipynb) | Figures 1–7 of a published paper, redrawn with lenscape |
+The [example notebooks](notebooks) run from public data to finished maps and figures. Start with the
+[quickstart](notebooks/01_quickstart.ipynb); [tutorial_first_map_research_note](notebooks/tutorial_first_map_research_note.ipynb)
+computes the map of the research note step by step.
 
 ## Documentation
 
@@ -126,13 +85,9 @@ Jupyter notebooks in [`notebooks/`](notebooks), each runnable in minutes:
 
 ## Contributing
 
-All my repositories embrace collaboration between humans and AI. Contributions are welcome, whether they are written by you, by an AI assistant, or by both together, and they will be handled promptly. Please open an [issue](https://github.com/hippke/pizzetti/issues) or a pull request.
+All my repositories embrace collaboration between humans and AI. Contributions are welcome, whether they are written by you, by an AI assistant, or by both together, and they will be handled promptly. Please open an [issue](https://github.com/hippke/lenscape/issues) or a pull request.
 
 ## Citing
 
 If you use `lenscape`, please cite the accompanying research note (in preparation) and the papers of the methods
 it builds on (see [docs/method.md](docs/method.md)). See `CITATION.cff`.
-
-## License
-
-GPL-3.0-or-later.
