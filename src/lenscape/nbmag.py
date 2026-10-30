@@ -472,6 +472,8 @@ def _tracked_mag(a, m1, m2, y, dy, imgs, par, n, work):
         J1 = m1 * _cinv((zz - a) * (zz - a)) + m2 * _cinv(zz * zz)
         J1c = J1.conjugate()
         dJ = 1.0 - (J1 * J1c).real
+        if dJ == 0.0:                                                 # on the critical curve: caller falls back
+            return 0.0, False
         zz = zz + (dy - J1c * dy.conjugate()) / dJ                  # first-order image displacement
         target = y + dy
         conv = False
@@ -481,6 +483,8 @@ def _tracked_mag(a, m1, m2, y, dy, imgs, par, n, work):
             J1 = m1 * _cinv((zz - a) * (zz - a)) + m2 * _cinv(zz * zz)
             J1c = J1.conjugate()
             dJ = 1.0 - (J1 * J1c).real
+            if dJ == 0.0:                                             # not converged
+                break
             step = (r - J1c * r.conjugate()) / dJ
             zz = zz + step
             if _cabs(step) < 1e-12 * (1.0 + _cabs(zz)):

@@ -87,7 +87,8 @@ def _images(a, m1, m2, y, dy, c, z, oz, op, odz, og):
         dJ = 1.0 - (J1 * J1c).real
         oz[n] = zz
         op[n] = 1.0 if dJ > 0 else -1.0
-        odz[n] = (dy - J1c * dy.conjugate()) / dJ
+        # dJ = 0 (on the critical curve): infinite tangent -> non-finite area -> the caller falls back
+        odz[n] = (dy - J1c * dy.conjugate()) / dJ if dJ != 0.0 else complex(np.inf, np.inf)
         n += 1
     _fix_parity(a, m1, m2, oz, op, n)
     return n
@@ -104,6 +105,8 @@ def _newton_image(a, m1, m2, y, zz, cnt):
         J1 = m1 * ia * ia + m2 * ib * ib
         J1c = J1.conjugate()
         dJ = 1.0 - (J1 * J1c).real
+        if dJ == 0.0:                      # exactly on the critical curve: not converged, the caller falls back
+            return zz, 0.0, 0j, False
         step = (r - J1c * r.conjugate()) / dJ
         zz = zz + step
         if cnt is not None:
@@ -164,6 +167,8 @@ def _images_tracked(a, m1, m2, y, dy, c, nL, PRED, PL, zall, oz, op, odz, og, cn
         q0 = b1 + r_ * q1
         b0, b1, b2, b3, b4, b5 = q0, q1, q2, q3, q4, 0j
     p0, p1, p2 = b0, b1, b2
+    if p2 == 0:                            # degenerate quadratic: the caller does a full solve
+        return -1
     disc = np.sqrt(p1 * p1 - 4.0 * p2 * p0 + 0j)
     g_a = (-p1 + disc) / (2.0 * p2)
     g_b = (-p1 - disc) / (2.0 * p2)

@@ -141,15 +141,24 @@ def chi2_profiled_binned(A, kpos, kf, kw, kidx, bm, bp, bh, bset, W, Sf, Sff, St
     return c
 
 
+def _lc(backend, pc, t):
+    """backend.lc(pc, t); a ZeroDivisionError (numba raises it for a complex division by an exact zero, whatever the
+    error model) is re-raised with the parameter vector, so that the failing light curve can be reproduced."""
+    try:
+        return backend.lc(pc, t)
+    except ZeroDivisionError as e:
+        raise ZeroDivisionError(f"{e} in backend.lc at p = {[float(v) for v in pc]}") from None
+
+
 def chi2(backend, p, data):
     pc, out = clamp(p)
     if getattr(data, "binned", False):
         d = data
-        A = backend.lc(pc, d.t_eval)
+        A = _lc(backend, pc, d.t_eval)
         return chi2_profiled_binned(A, d.k_pos, d.k_f, d.k_w, d.k_idx, d.b_m, d.b_p, d.b_h, d.b_set, d.b_W, d.b_Sf,
                                     d.b_Sff, d.b_Stf, d.b_Stt, d.nsets) + 1e4 * out
     if getattr(backend, "single_call", True):
-        A = backend.lc(pc, data.t)
+        A = _lc(backend, pc, data.t)
     else:
         A = magnification(backend, pc, data)
     # penalty pushes optimisers back into the box
@@ -321,10 +330,10 @@ def chi2_residuals(backend, p, data):
     pc, out = clamp(p)
     if getattr(data, "binned", False):
         d = data
-        r = resid_profiled_binned(backend.lc(pc, d.t_eval), d.k_pos, d.k_f, d.k_w, d.k_idx, d.b_m, d.b_p, d.b_h,
+        r = resid_profiled_binned(_lc(backend, pc, d.t_eval), d.k_pos, d.k_f, d.k_w, d.k_idx, d.b_m, d.b_p, d.b_h,
                                   d.b_set, d.b_W, d.b_Sf, d.b_Sff, d.b_Stf, d.b_Stt, d.nsets)
     else:
-        A = backend.lc(pc, data.t) if getattr(backend, "single_call", True) else magnification(backend, pc, data)
+        A = _lc(backend, pc, data.t) if getattr(backend, "single_call", True) else magnification(backend, pc, data)
         r = resid_profiled(A, data.f, data.w, data.idx, data.nsets)
     r[-1] = 100.0 * math.sqrt(out)
     return r
