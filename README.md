@@ -80,7 +80,7 @@ call compiles the kernels (about a minute); they are cached on disk afterwards.
 ## Examples
 
 The [example notebooks](https://github.com/hippke/lenscape/tree/main/notebooks) run from public data to finished maps and figures. Start with the
-[quickstart](https://github.com/hippke/lenscape/blob/main/notebooks/01_quickstart.ipynb); [tutorial_first_map_research_note](https://github.com/hippke/lenscape/blob/main/notebooks/tutorial_first_map_research_note.ipynb)
+[quickstart](https://github.com/hippke/lenscape/blob/main/notebooks/tutorials/01_quickstart.ipynb); [tutorial_first_map_research_note](https://github.com/hippke/lenscape/blob/main/notebooks/tutorials/tutorial_first_map_research_note.ipynb)
 computes the map of the research note step by step.
 
 ## Documentation

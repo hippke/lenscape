@@ -370,7 +370,7 @@ Many microlensing papers publish their figures as EPS vector graphics, which sto
 - `points_with_errors(subs, x_map, y_map, region, colours)` — `(name, x, y, error)` for every marker of the given
   colours inside a panel.
 
-See `notebooks/han2025.py` for a complete example.
+See `notebooks/real_events/han2025.py` for a complete example.
 
 ## Lower level
 

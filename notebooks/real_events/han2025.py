@@ -4,7 +4,7 @@ The paper (A&A, arXiv:2505.22951) does not publish its photometry. Its light-cur
 vector graphics: every plotted point and error bar is stored with its position. We read them (lenscape.eps), map
 device units to time and magnitude with the frames and tick marks of each panel, and add the public KMTNet points
 outside the plotted window (lenscape.datasets.kmtnet), mapped onto the paper's flux scale. The result is stored in
-notebooks/data/*_photometry.csv for the notebooks; this module rebuilds it from the paper's own source files.
+notebooks/real_events/data/*_photometry.csv for the notebooks; this module rebuilds it from the paper's own source files.
 """
 import os
 import numpy as np

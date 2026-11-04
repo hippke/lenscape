@@ -1,7 +1,13 @@
-# Tutorials
+# Notebooks
 
-Run them with Jupyter after `pip install lenscape[plot] jupyter` (or from a clone with `pip install -e ".[plot]"`).
-Data are downloaded on first use from the public KMTNet archive and cached in `~/.cache/lenscape/data`.
+Run them with Jupyter after `pip install lenscape[plot] jupyter` (or from a clone with `pip install -e ".[plot]"`),
+from inside their folder: each folder has a `data/` subfolder with the photometry, the stored solutions and the maps
+its notebooks load. KMTNet data are downloaded on first use from the public archive and cached in
+`~/.cache/lenscape/data`.
+
+## [`tutorials/`](tutorials)
+
+The package step by step, from loading data to maps, MCMC and physical parameters.
 
 | notebook | content | runtime* |
 |---|---|---|
@@ -15,9 +21,17 @@ Data are downloaded on first use from the public KMTNet archive and cached in `~
 | `08_mcmc` | posteriors with the ensemble sampler | 12 s |
 | `09_physical_parameters` | source radius, Einstein radius, proper motion | 1 s |
 | `10_caustic_crossings` | fits from rough starts with caustic-crossing starting points (simulated event, MOA-2022-BLG-091) | 1 min |
-| `han2025_figures` | Han et al. (2025) light curves and lens configurations (Figs. 1, 3, 4, 5, 7) from the CSV photometry (`han2025.py` rebuilt it from the paper's figures) | 10 s |
 | `tutorial_first_map_research_note` | for first-time users: from the photometry file `data/moa091_photometry.csv` to the research note's map (50 × 49 lattice, 2× and 4× densify) with all defaults | 45 min |
 | `tutorial_alpha_map` | the trajectory-angle map: all local minima in α and the filled (log *s*, α) profile, on the 1× map of the first tutorial | 60 min |
+
+## [`real_events/`](real_events)
+
+Published events (KMTNet, MOA), reanalysed with lenscape from public data and compared with the published solutions
+and maps.
+
+| notebook | content | runtime* |
+|---|---|---|
+| `han2025_figures` | Han et al. (2025) light curves and lens configurations (Figs. 1, 3, 4, 5, 7) from the CSV photometry (`han2025.py` rebuilt it from the paper's figures) | 10 s |
 | `example_kb200202` | example event KMT-2020-BLG-0202 (Han et al. 2026, one telescope, resonant caustic): the paper's 43 × 54 lattice, 2× and 4× densify, alternative solutions, the limits (maps not converged on a wide lattice, unrefined floor region), and a zoom on the central region (8× and 16× boxes, then strips along a narrow branch) that finds a minimum 2.3 below the published-start fit; stored maps, `RECOMPUTE = True` to rerun | 15 s (rerun: 10.4 h on a 20-thread i5-13500) |
 | `example_kb230466` | example event KMT-2023-BLG-0466 (Han et al. 2026, three telescopes, two caustic grazes): the paper's 24 × 52 lattice, 2×, 4× and 8× densify, a zoom on the central valley, comparison with the published map, alternative solutions, and the single data point that excludes the close one; stored maps, `RECOMPUTE = True` to rerun | 1 min (rerun: 6.3 h on a 20-thread i5-13500) |
 | `example_kb251314` | example event KMT-2025-BLG-1314 (Ren, Zang, Zhu et al. 2026, planet/stellar-binary degeneracy, public KMTNet data only): best fit from the ten published solutions, 1× map over the paper's panel, the q ↔ 1/q symmetry and folding, accuracy of the map values, comparison with the published map, and why a densify does not pay here; stored maps, `RECOMPUTE = True` to rerun | 10 s (rerun: 6.6 h on a 20-thread i5-13500) |
@@ -25,10 +39,19 @@ Data are downloaded on first use from the public KMTNet archive and cached in `~
 | `example_kb221551` | example event KMT-2022-BLG-1551 (Han et al. 2026, high magnification, central and planetary caustics): 1× map, 2× densify everywhere and 4× in the central region, comparison with the published map, zoom on the close valley (8× and 16× over a box, then strips that follow the valley at 64× and 128× in log s, and the full region around them at 64×), which finds a second minimum at q = 2.1 × 10⁻³ as good as the published one; what the alternatives look like; stored maps, `RECOMPUTE = True` to rerun | 7 s (rerun: 11.6 h on a 20-thread i5-13500) |
 | `example_kb250121` | example event KMT-2025-BLG-0121 (Han et al. 2026, a minimum sharper than the lattice; photometry read from the paper's Fig. 6 plus public pySIS): 1× map, accuracy of the map values, comparison with the published map, local minima, a zoom on the central region at 2×, 4× and 8×, and the valley itself at 16× to 256× (slanted, about 0.0005 dex wide in log *s*, resolved to below 0.1 in Δχ²); stored maps, `RECOMPUTE = True` to rerun | 5 s (rerun: 11 h on a 12-thread Ryzen 5 3600 for the 1× map, plus 5 h on a 20-thread i5-13500 for the zooms) |
 | `example_kb251616` | example event KMT-2025-BLG-1616 (Yang, Zang et al. 2026, four degenerate solutions that only the non-public DREAMS data break, public KMTNet data only): best fit from the published solutions, single-lens floor, coarse 1× map on the paper's 61 × 61 lattice, accuracy of the map values, comparison with the published map, local minima; zoom on the paper's dense box at 2× to 16× of the coarse step, which resolves the four valleys (the narrow resonant ones only at 16×); stored maps, `RECOMPUTE = True` to rerun | 8 s (rerun: 6.2 h on a 20-thread i5-13500, plus 5.3 h for the zooms) |
+
+## [`blind_roman_data_challenge/`](blind_roman_data_challenge)
+
+Blind analyses of simulated Roman events from the Roman Microlensing Data Challenge 2026, organised by the Roman
+Galactic Exoplanet Survey Project Infrastructure Team (RGES-PIT; data public domain,
+[rges-pit.org/data-challenge](https://rges-pit.org/data-challenge/)). The true parameters are not published.
+
+| notebook | content | runtime* |
+|---|---|---|
 | `example_rmdc26_000026` | blind analysis of a simulated Roman event (Roman Microlensing Data Challenge 2026, Beginner tier, public domain; true parameters not published): reducing 49 096 points in three filters to 1773 for the maps (event season only, time bins outside the anomaly, checked against the unbinned data), guided close/wide fits, coarse map, zooms at 8× and 64× that resolve a single sharp minimum (close planet, q = 1.16 × 10⁻⁴, s = 0.697), light curve, caustics and source trajectory, rough physical scale; stored maps, `RECOMPUTE = True` to rerun | 5 s (rerun: 30 min on a 20-thread i5-13500) |
 
 \* Measured on a 16-core AMD Ryzen 9 7950X, data already downloaded; the first notebook also compiles the
 kernels (about 2 minutes, cached afterwards).
 
 The maps in `06_maps` and `han2025_figures` take longer at finer resolution; each notebook says how the runtime
-scales. `data/` holds the photometry CSVs, the stored solutions and the 1× map used by the tutorials.
+scales.

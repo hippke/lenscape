@@ -33,7 +33,7 @@ the figure in the README), `lenscape` recovers the four solutions and the publis
 119 minutes for the 400 × 400 map.
 
 **With public data only**, the comparison uses the data points shown in the paper's light-curve figure (716 points)
-plus the public KMTNet baseline (2531 points in total); `notebooks/tutorial_first_map_research_note.ipynb`
+plus the public KMTNet baseline (2531 points in total); `notebooks/tutorials/tutorial_first_map_research_note.ipynb`
 computes this map.
 
 **Solutions.** Started from the published parameters, lenscape finds all four solutions with the same ranking:
