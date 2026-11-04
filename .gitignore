@@ -8,8 +8,8 @@ dist/
 .ipynb_checkpoints/
 *.npz
 !tests/data/*.npz
-!notebooks/data/*.npz
+!notebooks/*/data/*.npz
 bench/farfield_out/
-notebooks/data/tutorial_map_2x.npz
-notebooks/data/tutorial_map_4x.npz
-notebooks/data/tutorial_alpha_*.npz
+notebooks/tutorials/data/tutorial_map_2x.npz
+notebooks/tutorials/data/tutorial_map_4x.npz
+notebooks/tutorials/data/tutorial_alpha_*.npz
