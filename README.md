@@ -56,7 +56,9 @@ computes a map in stages:
 3. **Neighbour refinement.** Solutions propagate from point to point, for both the resolved and the unresolved
    source branch, until no point improves by more than 1.
 4. **Outlier recalculation.** Points worse than their neighbours get a deep search with many starts.
-5. **Densification** (optional) to finer lattices, or **finer cells** only where a Δχ² band edge runs between
+5. **Validation.** Every point's χ² is checked with tight magnification settings; values that were too low are
+   corrected and those points refitted, so the map shows exact χ² values (within about 1).
+6. **Densification** (optional) to finer lattices, or **finer cells** only where a Δχ² band edge runs between
    cells.
 
 The same stages at fixed (log *s*, *α*), with *q* free, give the profile of the trajectory angle. Each stage

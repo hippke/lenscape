@@ -23,6 +23,14 @@ NEWTON_TOL = 1e-10                       # relative image-position tolerance of 
 RICHARDSON = False                       # error estimate from the change of the area on splitting
 RICH_FACTOR = 1.0
 LD_CTOL_MAX = 0.03                       # contour tolerance cap inside the limb-darkening integral
+# A contour that exhausts its sample budget (status 1) is redone with RETRY_MAXS samples when reltol <= RETRY_CTOL.
+# At the grid tolerance (0.1) such contours have converged (the caustic-proximity rule keeps splitting after the area
+# is settled: 16 of 16 within 1.4e-4 of a 65536-sample value, KMT-2025-BLG-1616 map fits; but a smaller budget is not
+# safe: next to the lens at the source limb 1024 samples gave A = 542, 1536 gave 340.1, 2048 339.218), while at 1e-3
+# the refinement can stop half-way: that point (s = 1, q = 3e-5, |y| = 0.98 rho) gave A = 385.3 with 2048 samples,
+# 339.218 with 4096 or more at every tolerance.
+RETRY_CTOL = 0.0101
+RETRY_MAXS = 16384
 GL_T = np.array([0.5 - 0.5 * np.sqrt(0.6), 0.5, 0.5 + 0.5 * np.sqrt(0.6)])
 GL_W = np.array([5.0 / 18.0, 8.0 / 18.0, 5.0 / 18.0])
 
@@ -459,13 +467,24 @@ def mag_disk(s, q, y1, y2, rho, reltol, n0=16, maxs=2048, zwarm=None, cnt=None):
 
 
 @njit(cache=True, error_model='numpy', fastmath=FM)
+def _mag_disk_r(s, q, y1, y2, rho, reltol, n0, maxs, zwarm):
+    """mag_disk, redone with RETRY_MAXS samples if it exhausted maxs at reltol <= RETRY_CTOL"""
+    A, st, ns = mag_disk(s, q, y1, y2, rho, reltol, n0, maxs, zwarm)
+    if st == 1 and reltol <= RETRY_CTOL and maxs < RETRY_MAXS:
+        A2, st2, ns2 = mag_disk(s, q, y1, y2, rho, reltol, n0, RETRY_MAXS, zwarm)
+        if st2 >= 0:
+            return A2, st2, ns + ns2
+    return A, st, ns
+
+
+@njit(cache=True, error_model='numpy', fastmath=FM)
 def _ld_f(s, q, y1, y2, rho, phi, reltol, n0, maxs, zwarm):
     """Integrand M(rho sin phi) sin phi / pi of the limb-darkening integral (M = magnified area of the disk)."""
     sp = np.sin(phi)
     r = rho * sp
     if r <= 0.0:
         return 0.0, 0
-    Ak, stk, _ = mag_disk(s, q, y1, y2, r, reltol, n0, maxs, zwarm)
+    Ak, stk, _ = _mag_disk_r(s, q, y1, y2, r, reltol, n0, maxs, zwarm)
     return Ak * r * r * sp, stk
 
 
@@ -479,7 +498,7 @@ def mag_disk_ld(s, q, y1, y2, rho, reltol, ld, n0=8, maxs=2048, zwarm=None):
     Gauss-Legendre rule was off by up to 5e-3 at caustic crossings); tolerance 1e-2 * reltol relative."""
     if ld != 0.0:
         reltol = min(reltol, LD_CTOL_MAX)     # LD amplifies per-annulus contour bias (grid ctol 0.1: 5e-3 at caustics)
-    A1, st, ns = mag_disk(s, q, y1, y2, rho, reltol, n0, maxs, zwarm)
+    A1, st, ns = _mag_disk_r(s, q, y1, y2, rho, reltol, n0, maxs, zwarm)
     if ld == 0.0 or st < 0:
         return A1, st, ns
     tol = 1e-2 * reltol * A1 * rho * rho

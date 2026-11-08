@@ -9,6 +9,7 @@ hexadecapole approximations), ctol (contour integration).
 # loose settings for the many fits of a map; tight settings for best fits, MCMC and figures
 GRID_BACKEND = dict(kind="nb", tol=1e-2, reltol=3e-3, hexeps=1e-3, ctol=0.1)
 REFINE_BACKEND = dict(kind="nb", tol=1e-3, hexeps=1e-4, ctol=0.01)
+TIGHT_BACKEND = dict(kind="nb", tol=1e-5, hexeps=1e-6, ctol=1e-3)   # map validation (maps.validate)
 
 DEFAULT = dict(
     strategy="screen_d",           # 20 trajectory angles screened, the best n_screen refined (fit.fit_point)
@@ -40,6 +41,11 @@ DEFAULT = dict(
     profile_dedupe=True,           # profile stage 1: skip starts in the basin of one already fitted (-9 % CPU, same quality)
     profile_step=10.0,             # profile refinement: always fit the best neighbour (per u0 sign) when it beats a point by more
     profile_continuation=16,       # ... and if that fails, follow its branch to the point in this many sub-steps (0: off)
+    validate=True,                 # lattice/densify/polish: finally re-evaluate every point at tight settings and refit
+                                   # those > validate_gap above their map value at refine settings (maps.validate;
+                                   # KMT-2025-BLG-1616 2x map: values within 1 of the exact chi2 instead of up to 44,
+                                   # 28 of 527 points better by > 1, none worse; ~+15 % CPU)
+    validate_gap=1.0,
 )
 
 # Stage 1 (maps.lattice() from scratch): the fits there start far from the solution, so they get ρ starts and more

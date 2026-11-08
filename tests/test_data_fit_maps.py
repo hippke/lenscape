@@ -96,6 +96,22 @@ def test_fit_full_and_error_factors():
 
 
 @pytest.mark.slow
+def test_validate_replaces_a_too_low_map_value():
+    """maps.validate: a map value below the tight chi2 of its solution by more than validate_gap is replaced (and the
+    point refitted); values within the gap are kept."""
+    d = synthetic(n=60, efac=4.0)
+    logs, logq = TRUE[3] + np.array([-0.03, 0.03]), TRUE[4] + np.array([-0.15, 0.15])
+    r = maps.lattice(d, logs, logq, best=TRUE, workers=2, log=lambda *a: None)
+    cfg, fd = maps._prepare(d, C.DENSIFY, TRUE, True)
+    chi = r["chi2"].copy()
+    chi[0, 1] -= 50.0                                   # a grid value far too low
+    v, p, n = maps.validate(chi, r["pars"], logs, logq, cfg, workers=2, data=fd, log=lambda *a: None)
+    assert n == 1 and v[0, 1] > chi[0, 1] + 40.0 and abs(v[0, 1] - r["chi2"][0, 1]) < 2.0
+    keep = np.ones(chi.shape, bool); keep[0, 1] = False
+    assert np.all(v[keep] == r["chi2"][keep])
+
+
+@pytest.mark.slow
 def test_densify_and_alpha_minima():
     """A 2x finer lattice from a coarse one (no new cell fits) and the trajectory-angle minima of a lattice."""
     d = synthetic(n=60, efac=4.0)

@@ -126,6 +126,17 @@ valleys of the map; from a 5 × 5 coarse lattice a 17 × 17 test block ended wor
 Improves a result: at points shared with `previous` lattices it keeps the better solution, then runs neighbour
 refinement and outlier recalculation again.
 
+`lattice`, `densify` and `polish` end with `validate` when `cfg["validate"]` is true (the default).
+
+### `validate(chi, pars, logs, logq, cfg, workers=None, data=None, gap=None, rounds=3, log=print)`
+Checks map values at the tight settings: every point's solution is re-evaluated with `cfg["tight_backend"]`
+(default `config.TIGHT_BACKEND`); where that exceeds the map value by more than `gap` (default
+`cfg["validate_gap"]`, 1.0) the tight value replaces it and the point is refitted at `cfg["refine_backend"]`
+settings from its own and its four neighbours' solutions, a refit being kept if its tight χ² is lower (up to
+`rounds` rounds). Other points keep their grid-settings values (within `gap` of the tight ones). `data`: the fit
+data of the map (binned wings as in the map). Returns `chi, pars, n` (points replaced in the first round).
+KMT-2025-BLG-1616 2× zoom: 93 of 527 values replaced (up to 44 too low), 28 points better by > 1, none worse.
+
 ### `alpha_minima(result, data, best=None, cfg=None, workers=None, n_alpha=20, tol_alpha=0.02, bin_wings=True, log=print)`
 All local minima in the trajectory angle at every lattice point (fits from `n_alpha` angles, distinct minima kept):
 rows of (log s, log q, χ², t0, u0, tE, α, log ρ). This is how (log s, α) maps are usually drawn.
@@ -251,13 +262,14 @@ Methods `to_x(y)`, `from_x(x)`, `steps(y, scale)`.
 
 ## `lenscape.config` — settings
 
-`DEFAULT` (settings of fits and maps), `GRID_BACKEND`, `REFINE_BACKEND`. Copy and modify:
+`DEFAULT` (settings of fits and maps), `GRID_BACKEND`, `REFINE_BACKEND`, `TIGHT_BACKEND` (map validation). Copy and modify:
 `cfg = dict(lenscape.config.DEFAULT, n_screen=6, seed=dict(t0=..., u0=..., tE=..., logrho=...))`.
 
 Options of the maps. `optimizer="nm_lm"`, `smooth=0.2`, `interp_start`, `lm_gate=1.0` and `dedupe` are the defaults; set `optimizer="nm"`, `smooth=None`, `interp_start=False`, `lm_gate=None`, `dedupe=False`, `box_lm=False`, `n_screen_seeded=4` for the earlier behaviour (Nelder–Mead only, no refits of rough points, every start fitted in full). (log s, α) profile fits use `profile_optimizer` (default `"nm"`: `nm_lm` was 4× faster there but worse from distant starts):
 
 | key | effect |
 |---|---|
+| `validate=True`, `validate_gap=1.0` | `lattice`, `densify`, `polish` end with `maps.validate`: every point's solution re-evaluated at `TIGHT_BACKEND` settings, values more than `validate_gap` too low replaced and those points refitted at refine settings (KMT-2025-BLG-1616 2×: values up to 44 too low before, within 1 after; ~+15 % CPU). `False`: the earlier behaviour (grid-settings values) |
 | `optimizer="nm_lm"` | local fits as a short Nelder–Mead exploration (`explore_nfev`, default 100 evaluations) followed by Levenberg–Marquardt on the residual vector (`optimize.least_squares_lm`), instead of Nelder–Mead alone. Used by the lattice-point fits, neighbour refinement, `densify`, `polish`, `alpha_profile` and the refinement step of `alpha_minima` and `fit_point`; cell fits stay Nelder–Mead. MOA-2022-BLG-091: densified block 3.1× less CPU (99.8 % of points in the same Δχ² band as Nelder–Mead), (log s, α) profile 4.0× |
 | `smooth=0.2` | neighbour refinement also refits every point whose χ² exceeds the interpolation through its opposite neighbours by more than this, from all 8 neighbours' solutions (no one-χ² pre-check, no margin). Removes the speckle of fits stuck 1–3 above their neighbours, which the normal trigger (neighbour better by > 1 at once) misses; MOA-2022-BLG-091 8× lattice block: roughness 0.72 → 0.09, half of the points 2.3 lower (median), a whole corner > 4 lower. Recommended for figures |
 | `box_lm=True` (default) | cell fits (`fit_point_box`) refined by a short Nelder–Mead and Levenberg–Marquardt in (log s, log q) clipped to the cell instead of 1500 Nelder–Mead evaluations. MOA-2022-BLG-091, 16 × 16 lattice from scratch: cell stage 3432 → 1049 CPU-s with `n_screen_seeded=0`; final map 96.1 % of the points in the same band as the stored 50 × 49 map (Nelder–Mead cells: 95.7 %), 2 of 256 points worse by > 1 |

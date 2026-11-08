@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Maps end with a validation stage (`maps.validate`, on by default: `cfg["validate"]`, `cfg["validate_gap"] = 1`).
+  The grid-settings χ² of a map point's solution can be off by tens: on KMT-2025-BLG-1616 (2x zoom, 527 points) the
+  map values were up to 44 below the exact χ² of their own solutions (95th percentile 14.8), mostly along the s = 1
+  row, and a fit can settle where the grid value is too low. Every point's solution is now re-evaluated with
+  `config.TIGHT_BACKEND`; where that is more than `validate_gap` above the map value, the tight value replaces it and
+  the point is refitted at refine settings from its own and its neighbours' solutions (kept if its tight χ² is
+  lower; up to three rounds). Same map: 93 points replaced, 28 better by > 1 (2 by > 10), none worse, all values
+  within 1 of the exact χ². Cost about +15 % of a densify (that map: 364 s on 8 cores, the densify 846 s on 20
+  threads). `validate=False` restores
+  the previous behaviour. The example notebooks were computed before this change and are not rerun: their map values
+  are the grid-settings values.
+- Contour integrations that exhaust their sample budget (status 1) at a tolerance <= 0.01 (`REFINE_BACKEND`, the
+  tight settings) are redone with 16384 samples (`contour.RETRY_CTOL`, `RETRY_MAXS`). Next to the lens at the source
+  limb (s = 1, q = 3e-5, |y| = 0.98 rho) the refinement at ctol 1e-3 stopped half-way with 2048 samples (A = 385.3
+  instead of 339.2, 13 % off); best fits, MCMC and figures could inherit such points. At the grid tolerance the
+  contours that exhaust 2048 samples had converged (16 of 16 within 1.4e-4 on KMT-2025-BLG-1616 map fits), but a
+  smaller budget is not safe (that point: 1024 samples A = 542, 1536: 340.1). No measurable cost (benchmark and
+  robustness light curves at refine and tight settings).
+
 ## 1.0 (2026-10-27)
 
 First public version.

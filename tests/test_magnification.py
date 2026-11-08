@@ -51,3 +51,19 @@ def test_central_caustic_near_axis_regression():
     for reltol, n0, maxs in ((0.1, 8, 2048), (0.1 / 3, 32, 4096), (0.01, 8, 8192), (1e-3, 8, 8192)):
         A, status, _ = contour.mag_disk(s, q, y1, y2, rho, reltol, n0, maxs)
         assert status >= 0 and abs(A / 2891.7 - 1) < 2e-3
+
+
+def test_contour_budget_retry_and_grid_cap():
+    """Lens at the source limb (s = 1, q = 3.16e-5, |y| = 0.98 rho): with 2048 samples the ctol 1e-3 refinement stopped
+    half-way (A = 385.3); the retry with RETRY_MAXS samples converges to 339.218, which every tolerance reaches with
+    enough samples. The grid tolerance converges there only with about 2000 samples (1024: A = 542, 1536: 340.1), so
+    the default budget of 2048 must not be cut."""
+    from lenscape import contour
+    s, q, rho = 1.0, 10 ** -4.5, 0.003938708612378672
+    y1, y2 = 0.0009357064347995461, 0.003756647196279318
+    a_ref, st_ref, _ = contour.mag_disk(s, q, y1, y2, rho, 1e-3, maxs=32768)
+    assert st_ref == 0 and abs(a_ref / 339.218 - 1) < 1e-5
+    a, st, ns = contour.mag_disk_ld(s, q, y1, y2, rho, 1e-3, 0.0)          # 2048 samples, then the retry
+    assert st >= 0 and abs(a / a_ref - 1) < 1e-4 and ns > 2048
+    a, st, ns = contour.mag_disk_ld(s, q, y1, y2, rho, 0.1, 0.0)           # grid tolerance, 2048 samples
+    assert st >= 0 and abs(a / a_ref - 1) < 1e-3

@@ -64,6 +64,13 @@ mostly start from their neighbours' solutions instead.
    unresolved sources form separate minima (basins of attraction), and both branches must be able to spread.
 5. **Outlier recalculation.** A point whose χ² exceeds both neighbours along an axis by more than 8 is a stuck fit
    in practice; it gets a deep search from about 1000 starts plus its neighbours' solutions.
+6. **Validation** (`maps.validate`, also at the end of `densify` and `polish`; `cfg["validate"]`, default on). The
+   map settings compute magnifications to ~10⁻³, but where a point's light curve crosses caustics many times the
+   χ² error accumulates: on KMT-2025-BLG-1616 the grid-settings values of a 2× zoom were up to 44 below the exact χ²
+   of their own solutions, and a fit can settle where the grid value is too low. Every point's solution is
+   re-evaluated once at the tight settings; a point more than `validate_gap` (1) above its map value takes the tight
+   value and is refitted at the refine settings from its own and its neighbours' solutions. Afterwards all map
+   values lie within about 1 of the exact χ² (that map: 28 of 527 points better by > 1, none worse; ~15 % CPU).
 
 ## Finer maps
 
@@ -106,6 +113,11 @@ not the map. The compiled kernels are loaded once in the parent before forking.
 | point source accepted if the quadrupole term < `tol` | 10⁻² | 10⁻³ |
 | hexadecapole accepted if its error estimate < `hexeps` | 10⁻³ | 10⁻⁴ |
 | contour integration relative tolerance `ctol` | 0.1 | 0.01 |
+
+`TIGHT_BACKEND` (10⁻⁵, 10⁻⁶, 10⁻³) is used by the map validation. A contour integration has a budget of 2048
+samples; at `ctol` ≤ 0.01 one that exhausts it is redone with 16384 samples (next to the lens at the source limb the
+refinement at 10⁻³ can otherwise stop half-way, 13 % off). At the grid tolerance the budget is not cut below 2048:
+the same point needs about 2000 samples there.
 
 Magnifications agree with VBBinaryLensing (tolerance 10⁻⁵) to 2 × 10⁻³ with the map settings and 5 × 10⁻⁴ with
 the tight settings on 400 test points along caustic-crossing trajectories, and to better than 10⁻² on 4000
