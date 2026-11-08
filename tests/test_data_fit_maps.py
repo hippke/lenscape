@@ -73,6 +73,18 @@ def test_no_vbbl_and_determinism():
     assert out[0] == out[1]
 
 
+def test_same_fit_with_a_cold_and_a_warm_numba_cache(tmp_path):
+    """numba compiles a kernel standalone when a process calls it first, and loads from its cache the copy inlined in
+    the caller; under fastmath 'reassoc' the copies rounded differently and the optimisers amplified that into
+    different fits (on a fresh clone the determinism tests failed, warm they passed). The same fit whether the
+    kernels are compiled or loaded, and in either call order. (~30 s: one cold compile)"""
+    env = dict(os.environ, NUMBA_CACHE_DIR=str(tmp_path))
+    run = lambda m: subprocess.run([sys.executable, "-c", SCRIPT, m], capture_output=True, text=True, check=True,
+                                   env=env).stdout
+    out = [run("clean"), run("noisy"), run("clean")]      # compiles; loads (other call order); loads
+    assert out[0] == out[1] == out[2]
+
+
 @pytest.mark.slow
 def test_small_map_and_refinement():
     """3 x 3 lattice around the truth: minimum at the true point; refinement adds finer cells and never worsens.

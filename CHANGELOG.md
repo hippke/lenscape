@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fix: results depended on whether numba compiled a kernel or loaded it from its cache, and in which order. numba
+  keeps a copy of a kernel in every caller and optimises each again; under the fastmath flag `reassoc` the copies
+  rounded differently (the same light curves came out with three different bit patterns across load orders), and the
+  fits amplified that into different maps at the 1e-8 level, so a fresh install failed the determinism tests that a
+  warm cache passed. `reassoc` is dropped from the kernels' fastmath flags (`nbmag`, `contour`, `single`): light
+  curves, gradients and chi2 now agree bit for bit in any order (new test
+  `test_same_fit_with_a_cold_and_a_warm_numba_cache`); magnifications are ~3 % slower, accuracy unchanged. Results
+  differ from earlier versions in the last digits; the example notebooks are not rerun.
 - Maps end with a validation stage (`maps.validate`, on by default: `cfg["validate"]`, `cfg["validate_gap"] = 1`).
   The grid-settings χ² of a map point's solution can be off by tens: on KMT-2025-BLG-1616 (2x zoom, 527 points) the
   map values were up to 44 below the exact χ² of their own solutions (95th percentile 14.8), mostly along the s = 1

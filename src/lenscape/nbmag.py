@@ -10,7 +10,10 @@ import numpy as np
 from numba import njit
 
 # no zero-division checks and 'safe' fast-math (no nnan/ninf: the code relies on inf/nan semantics)
-FM = {'nsz', 'arcp', 'contract', 'afn', 'reassoc'}  # nsz is safe since the parity-sum fix (contour._fix_parity)
+# no 'reassoc': numba keeps a copy of a kernel in every caller and optimises each again, and under reassoc the copies
+# rounded differently, so results depended on whether a process compiled a kernel or loaded it from the cache, and in
+# which order (fresh installs failed the determinism tests); without it the light curves agree bit for bit (~3 % slower)
+FM = {'nsz', 'arcp', 'contract', 'afn'}  # nsz is safe since the parity-sum fix (contour._fix_parity)
 
 DLMIN = 1.0e-4
 

@@ -13,7 +13,10 @@ import numpy as np
 from numba import njit
 from . import model
 
-FM = {'nsz', 'arcp', 'contract', 'afn', 'reassoc'}  # nsz is safe since the parity-sum fix (contour._fix_parity)
+# no 'reassoc': numba keeps a copy of a kernel in every caller and optimises each again, and under reassoc the copies
+# rounded differently, so results depended on whether a process compiled a kernel or loaded it from the cache, and in
+# which order (fresh installs failed the determinism tests); without it the light curves agree bit for bit (~3 % slower)
+FM = {'nsz', 'arcp', 'contract', 'afn'}  # nsz is safe since the parity-sum fix (contour._fix_parity)
 _X, _W = np.polynomial.legendre.leggauss(96)
 GX = 0.5 * (_X + 1.0)                 # nodes on [0, 1]
 GW = 0.5 * _W
