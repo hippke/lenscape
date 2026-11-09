@@ -109,18 +109,33 @@ def test_fit_full_and_error_factors():
 
 @pytest.mark.slow
 def test_validate_replaces_a_too_low_map_value():
-    """maps.validate: a map value below the tight chi2 of its solution by more than validate_gap is replaced (and the
-    point refitted); values within the gap are kept."""
+    """maps.validate: every map value becomes the tight chi2 of its solution (one scale for the whole map, no
+    patchwork of grid and tight values); a value below that by more than validate_gap is counted and its point
+    refitted. A lattice keeps the grid-settings values of its solutions as chi2_grid."""
     d = synthetic(n=60, efac=4.0)
     logs, logq = TRUE[3] + np.array([-0.03, 0.03]), TRUE[4] + np.array([-0.15, 0.15])
     r = maps.lattice(d, logs, logq, best=TRUE, workers=2, log=lambda *a: None)
     cfg, fd = maps._prepare(d, C.DENSIFY, TRUE, True)
-    chi = r["chi2"].copy()
+    tight = np.array([[maps._tight_task(ls, lq, r["pars"][i, j], cfg) for j, lq in enumerate(logq)]
+                      for i, ls in enumerate(logs)])
+    grid = np.array([[float(M.chi2(F.make_backend(cfg["grid_backend"]), F.full_p(r["pars"][i, j], ls, lq), fd))
+                      for j, lq in enumerate(logq)] for i, ls in enumerate(logs)])
+    assert np.all(r["chi2"] == tight) and np.allclose(r["chi2_grid"], grid, rtol=0, atol=1e-6)   # all tight, grid kept
+    assert r["chi2_ref"] == np.min(tight)
+    chi = r["chi2_grid"].copy()
     chi[0, 1] -= 50.0                                   # a grid value far too low
-    v, p, n = maps.validate(chi, r["pars"], logs, logq, cfg, workers=2, data=fd, log=lambda *a: None)
+    v, p, n, g = maps.validate(chi, r["pars"], logs, logq, cfg, workers=2, data=fd, log=lambda *a: None,
+                               with_grid=True)
     assert n == 1 and v[0, 1] > chi[0, 1] + 40.0 and abs(v[0, 1] - r["chi2"][0, 1]) < 2.0
     keep = np.ones(chi.shape, bool); keep[0, 1] = False
-    assert np.all(v[keep] == r["chi2"][keep])
+    assert np.all(v[keep] == tight[keep]) and np.all(g[keep] == chi[keep])    # tight values, grid values returned
+    if np.any(p[0, 1] != r["pars"][0, 1]):              # refit kept: the grid value of the new solution
+        gb = F.make_backend(cfg["grid_backend"])
+        assert np.isclose(g[0, 1], float(M.chi2(gb, F.full_p(p[0, 1], logs[0], logq[1]), fd)), rtol=0, atol=1e-6)
+    else:
+        assert g[0, 1] == chi[0, 1]
+    v3 = maps.validate(chi, r["pars"], logs, logq, cfg, workers=2, data=fd, log=lambda *a: None)
+    assert len(v3) == 3 and np.all(v3[0] == v)
 
 
 @pytest.mark.slow
@@ -131,7 +146,7 @@ def test_densify_and_alpha_minima():
                           workers=2, log=lambda *a: None)
     fine = maps.densify([coarse], d, TRUE[3] + np.array([-0.03, 0.0, 0.03]), TRUE[4] + np.array([-0.15, 0.0, 0.15]),
                         best=TRUE, workers=2, log=lambda *a: None)
-    assert np.unravel_index(np.nanargmin(fine["chi2"]), (3, 3)) == (1, 1)
+    assert np.unravel_index(np.nanargmin(fine["chi2"]), (3, 3)) == (1, 1) and fine["chi2_grid"].shape == (3, 3)
     m = maps.alpha_minima(fine, d, best=TRUE, workers=2, n_alpha=8, log=lambda *a: None)
     at_true = m[(np.abs(m[:, 0] - TRUE[3]) < 1e-9) & (np.abs(m[:, 1] - TRUE[4]) < 1e-9)]
     assert len(at_true) >= 1 and np.min(at_true[:, 2]) <= fine["chi2"][1, 1] + 1.0
@@ -211,7 +226,7 @@ def test_nm_lm_local_fit_and_densify():
                           workers=2, log=lambda *a: None)
     fine = maps.densify([coarse], d, TRUE[3] + np.array([-0.03, 0.0, 0.03]), TRUE[4] + np.array([-0.15, 0.0, 0.15]),
                         best=TRUE, cfg=cfg, workers=2, log=lambda *a: None)
-    assert np.unravel_index(np.nanargmin(fine["chi2"]), (3, 3)) == (1, 1)
+    assert np.unravel_index(np.nanargmin(fine["chi2"]), (3, 3)) == (1, 1) and fine["chi2_grid"].shape == (3, 3)
     fine2 = maps.densify([coarse], d, TRUE[3] + np.array([-0.03, 0.0, 0.03]), TRUE[4] + np.array([-0.15, 0.0, 0.15]),
                          best=TRUE, cfg=dict(cfg, interp_start=True), workers=2, log=lambda *a: None)
     assert np.unravel_index(np.nanargmin(fine2["chi2"]), (3, 3)) == (1, 1)

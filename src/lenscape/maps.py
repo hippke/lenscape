@@ -153,56 +153,61 @@ def _tight_task(ls, lq, x, cfg):
 
 
 def _validate_refit(ls, lq, starts, cfg):
-    """Refit at refine settings from the given starts; returns (tight chi2, solution) or None"""
+    """Refit at refine settings from the given starts; returns (tight chi2, solution, grid-settings chi2) or None"""
     v = _point_from_starts(ls, lq, starts, dict(cfg, grid_backend=cfg["refine_backend"], branches=None))
     if v is None or v[1] is None:
         return None
     x = np.asarray(v[1], float)
-    return _tight_task(ls, lq, x, cfg), x
+    grid = float(M.chi2(F.make_backend(cfg["grid_backend"]), F.full_p(x[:5], ls, lq), G._DATA))
+    return _tight_task(ls, lq, x, cfg), x, grid
 
 
-def validate(chi, pars, logs, logq, cfg, workers=None, data=None, gap=None, rounds=3, log=print):
-    """Map values checked at tight settings. The grid-settings chi2 of a map's solution can be wrong by tens
+def validate(chi, pars, logs, logq, cfg, workers=None, data=None, gap=None, log=print, with_grid=False):
+    """Map values at tight settings. The grid-settings chi2 of a map's solution can be wrong by tens
     (KMT-2025-BLG-1616 2x map: up to 44 too low on the s = 1 row) and a fit can settle where it is too low. Every
-    point's solution is re-evaluated with cfg["tight_backend"] (default config.TIGHT_BACKEND); where that exceeds the
-    map value by more than gap (default cfg["validate_gap"], 1.0) the tight value replaces it, and the point is
-    refitted at refine settings from its own and its neighbours' solutions, a refit being kept if its tight chi2 is
-    lower. Up to `rounds` rounds. Other points keep their grid-settings values (within gap of the tight ones).
-    Returns chi, pars, number of points replaced in the first round."""
+    point's solution is re-evaluated with cfg["tight_backend"] (default config.TIGHT_BACKEND), and these tight values
+    become the map values at every point, so that the whole map is on one chi2 scale (replacing only the values
+    that were too low left a patchwork: KMT-2025-BLG-1616 valley maps, grid and tight settings 0.7-1.0 apart, 30-50 %
+    of the values replaced, neighbours up to ~1 apart in scale). Where the tight value exceeds the grid value by more
+    than gap (default cfg["validate_gap"], 1.0), the point is also refitted at refine settings from its own and its
+    neighbours' solutions, a refit being kept if its tight chi2 is lower. Points without a tight value (no finite
+    solution) keep their input value. with_grid: also return the grid-settings chi2 of the final solutions, the scale
+    that the fits of later stages compare against (densify / polish starts, neighbour refinement).
+    Returns chi, pars, n (points above their grid value by > gap) [, chi_grid]."""
     workers = _workers(workers)
     if data is not None:
         G._DATA = data
     gap = cfg.get("validate_gap", 1.0) if gap is None else gap
-    chi, pars = np.array(chi, float), np.array(pars, float)
+    chi_grid, pars = np.array(chi, float), np.array(pars, float)
+    chi = chi_grid.copy()
     ni, nj = chi.shape
-    n_first = None
     G.warmup(dict(cfg, grid_backend=cfg.get("tight_backend", C.TIGHT_BACKEND)), G._DATA)
-    for r in range(rounds):
-        tasks = {(i, j): (float(logs[i]), float(logq[j]), pars[i, j], cfg) for i in range(ni) for j in range(nj)
-                 if np.isfinite(chi[i, j]) and np.all(np.isfinite(pars[i, j]))}
-        res, _ = G.run_isolated(_tight_task, tasks, workers, log=log, desc=f"validation, round {r + 1}")
-        bad = [k for k, v in res.items() if v is not None and not v - chi[k] <= gap]
-        dev = np.array([res[k] - chi[k] for k in res if res[k] is not None])
-        log(f"validation, round {r + 1}: {len(bad)} of {len(res)} points above their map value by > {gap} at tight "
-            f"settings (|tight - map| median {np.median(np.abs(dev)):.3f}, max {np.max(dev):.1f})")
-        n_first = len(bad) if n_first is None else n_first
-        for k in bad:
-            chi[k] = res[k]
-        if not bad:
-            break
+    tasks = {(i, j): (float(logs[i]), float(logq[j]), pars[i, j], cfg) for i in range(ni) for j in range(nj)
+             if np.isfinite(chi[i, j]) and np.all(np.isfinite(pars[i, j]))}
+    res, _ = G.run_isolated(_tight_task, tasks, workers, log=log, desc="validation")
+    res = {k: v for k, v in res.items() if v is not None}
+    bad = [k for k, v in res.items() if not v - chi_grid[k] <= gap]
+    dev = np.array([v - chi_grid[k] for k, v in res.items()])
+    for k, v in res.items():
+        chi[k] = v
+    kept = int(np.isfinite(chi_grid).sum()) - len(res)
+    log(f"validation: {len(res)} values at tight settings (tight - grid median {np.median(dev) if len(dev) else 0:+.3f}, "
+        f"|tight - grid| median {np.median(np.abs(dev)) if len(dev) else 0:.3f}, max {np.max(dev) if len(dev) else 0:.1f})"
+        f"; {len(bad)} above their grid value by > {gap}" + (f"; {kept} points without a tight value" if kept else ""))
+    if bad:
         rt = {}
         for i, j in bad:
             nb = [(i + a, j + b) for a, b in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)) if 0 <= i + a < ni and 0 <= j + b < nj]
             rt[(i, j)] = (float(logs[i]), float(logq[j]), [pars[k] for k in nb if np.all(np.isfinite(pars[k]))], cfg)
         G.warmup(dict(cfg, grid_backend=cfg["refine_backend"]), G._DATA)
-        rr, _ = G.run_isolated(_validate_refit, rt, workers, log=log, desc=f"validation refits, round {r + 1}")
+        rr, _ = G.run_isolated(_validate_refit, rt, workers, log=log, desc="validation refits")
         n = 0
         for k, v in rr.items():
             if v is not None and v[0] < chi[k]:
                 n += chi[k] - v[0] > 1.0
-                chi[k], pars[k] = v
-        log(f"validation refits, round {r + 1}: {len(rt)} points, {n} improved by > 1")
-    return chi, pars, n_first or 0
+                chi[k], pars[k], chi_grid[k] = v
+        log(f"validation refits: {len(rt)} points, {n} improved by > 1")
+    return (chi, pars, len(bad), chi_grid) if with_grid else (chi, pars, len(bad))
 
 
 def _grid_knn(Kx, Ky, xs, ys, m, period_y=None):
@@ -361,12 +366,15 @@ def lattice(data, logs, logq, best=None, cfg=None, workers=None, bands=BANDS, se
     ST("Recalculate outliers", "deep search for points that are worse than their neighbours")
     chi2, pars2, _ = G.repair_outliers(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10,
                                        dchi2_cut=cut)
+    chi2g = chi2
     if cfg.get("validate"):
-        chi2, pars2, _ = validate(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log)
+        chi2, pars2, _, chi2g = validate(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log,
+                                         with_grid=True)
     t3 = time.time()
-    ref = float(min(np.nanmin(chi2), np.min(B["chi2"])))
+    # the cell fits are grid-settings values: they count for the reference only on that scale
+    ref = float(np.nanmin(chi2)) if cfg.get("validate") else float(min(np.nanmin(chi2), np.min(B["chi2"])))
     log(f"done in {t3 - t0:.0f}s; lowest chi2 {ref:.2f}")
-    return dict(logs=logs, logq=logq, chi2=chi2, pars=pars2, chi2_ref=ref, chi2_first=chi, cells=B,
+    return dict(logs=logs, logq=logq, chi2=chi2, chi2_grid=chi2g, pars=pars2, chi2_ref=ref, chi2_first=chi, cells=B,
                 wall=t3 - t0, wall_cells=t1 - t0, wall_points=t2 - t1, wall_refinement=t3 - t2)
 
 
@@ -376,7 +384,8 @@ def refine(result, data, levels=2, best=None, cfg=None, workers=None, bands=BAND
     lattice point where that is lower). Returns the leaves: logs, logq (cell centres), hs, hq (half widths), chi2
     (best chi2 inside the cell), x (best fit: t0, u0, tE, alpha, log rho, log s, log q), level, chi2_ref."""
     workers = _workers(workers)
-    logs, logq, chi, pars, B = result["logs"], result["logq"], result["chi2"], result["pars"], result["cells"]
+    logs, logq, pars, B = result["logs"], result["logq"], result["pars"], result["cells"]
+    chi = result.get("chi2_grid", result["chi2"])            # the cells' scale (grid settings)
     dls, dlq = logs[1] - logs[0], logq[1] - logq[0]
     cfg, fitdata = _prepare(data, cfg, best, bin_wings)
     start = {}
@@ -392,19 +401,23 @@ def refine(result, data, levels=2, best=None, cfg=None, workers=None, bands=BAND
                         (len(logs), len(logq)), levels, cfg, fitdata, np.asarray(bands, float), workers=workers,
                         start=start, min_ds=0.99 * dls / 2 ** levels, min_dq=0.99 * dlq / 2 ** levels, stage=ST,
                         log=log)
-    A["chi2_ref"] = float(min(result["chi2_ref"], A["chi2"].min()))
+    # the leaves are grid-settings values: against a validated lattice, the reference on that scale
+    ref0 = float(np.nanmin(chi)) if "chi2_grid" in result else result["chi2_ref"]
+    A["chi2_ref"] = float(min(ref0, A["chi2"].min()))
     return A
 
 
 def _known_solutions(previous):
-    """(log s, log q, chi2, 5-vector) of all solutions in earlier lattice() / refine() / densify() results."""
+    """(log s, log q, chi2, 5-vector) of all solutions in earlier lattice() / refine() / densify() results. chi2 is
+    on the grid-settings scale of the fits that start from them (a validated lattice's chi2_grid)."""
     rows = []
     for r in previous:
         if np.ndim(r["chi2"]) == 2:                                    # lattice points
+            cg = r.get("chi2_grid", r["chi2"])
             for i, ls in enumerate(r["logs"]):
                 for j, lq in enumerate(r["logq"]):
-                    if np.isfinite(r["chi2"][i, j]) and np.all(np.isfinite(r["pars"][i, j])):
-                        rows.append((ls, lq, r["chi2"][i, j], r["pars"][i, j]))
+                    if np.isfinite(cg[i, j]) and np.all(np.isfinite(r["pars"][i, j])):
+                        rows.append((ls, lq, cg[i, j], r["pars"][i, j]))
         else:                                                          # cells: best fit inside the cell
             for x, c in zip(r["x"], r["chi2"]):
                 if np.isfinite(c) and np.all(np.isfinite(x)):
@@ -470,13 +483,16 @@ def densify(previous, data, logs, logq, best=None, cfg=None, workers=None, n_sta
     ST("Recalculate outliers", "deep search for points that are worse than their neighbours")
     chi2, pars2, _ = G.repair_outliers(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10,
                                        dchi2_cut=cut)
+    chi2g = chi2
     if cfg.get("validate"):
-        chi2, pars2, _ = validate(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log)
+        chi2, pars2, _, chi2g = validate(chi2, pars2, logs, logq, cfg, workers=workers, data=fitdata, log=log,
+                                         with_grid=True)
     t2 = time.time()
-    ref = float(min(np.nanmin(chi2), min(c for _, _, c, _ in known)))
+    # lowest value found, on the map scale: this map's and those of the previous results (known holds grid values)
+    ref = float(min([np.nanmin(chi2)] + [np.nanmin(r["chi2"]) for r in previous if np.size(r["chi2"])]))
     log(f"done in {t2 - t0:.0f}s; lowest chi2 {ref:.2f}")
-    return dict(logs=logs, logq=logq, chi2=chi2, pars=pars2, chi2_ref=ref, chi2_first=chi, wall=t2 - t0,
-                wall_points=t1 - t0, wall_refinement=t2 - t1)
+    return dict(logs=logs, logq=logq, chi2=chi2, chi2_grid=chi2g, pars=pars2, chi2_ref=ref, chi2_first=chi,
+                wall=t2 - t0, wall_points=t1 - t0, wall_refinement=t2 - t1)
 
 
 def polish(result, data, previous=(), best=None, cfg=None, workers=None, max_sweeps=30, bin_wings=True, dchi2_cut=5.0,
@@ -490,17 +506,19 @@ def polish(result, data, previous=(), best=None, cfg=None, workers=None, max_swe
                             _check_models([(np.array([x[0], x[1], x[2], a, b, x[3], x[4]]), c) for a, b, c, x in known], best)
                             if best is not None else ())
     logs, logq = result["logs"], result["logq"]
-    chi, pars = result["chi2"].copy(), result["pars"].copy()
+    # refinement and merging on the grid-settings scale of the fits (a validated result's chi2_grid)
+    chi, pars = np.array(result.get("chi2_grid", result["chi2"]), float), result["pars"].copy()
     n_old = 0
     for p in previous:
+        pc = p.get("chi2_grid", p["chi2"])
         for a, ls in enumerate(p["logs"]):
             i = int(np.argmin(np.abs(logs - ls)))
             if abs(logs[i] - ls) > 1e-9:
                 continue
             for b, lq in enumerate(p["logq"]):
                 j = int(np.argmin(np.abs(logq - lq)))
-                if abs(logq[j] - lq) < 1e-9 and p["chi2"][a, b] < chi[i, j]:
-                    chi[i, j], pars[i, j] = p["chi2"][a, b], p["pars"][a, b]
+                if abs(logq[j] - lq) < 1e-9 and pc[a, b] < chi[i, j]:
+                    chi[i, j], pars[i, j] = pc[a, b], p["pars"][a, b]
                     n_old += 1
     log(f"{n_old} points taken from earlier lattices")
     ST = G.Stages(2, log)
@@ -511,9 +529,11 @@ def polish(result, data, previous=(), best=None, cfg=None, workers=None, max_swe
     ST("Recalculate outliers", "deep search for points that are worse than their neighbours")
     chi, pars, _ = G.repair_outliers(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log, passes=10,
                                      dchi2_cut=cut)
+    chig = chi
     if cfg.get("validate"):
-        chi, pars, _ = validate(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log)
-    return dict(result, chi2=chi, pars=pars, chi2_ref=float(min(result["chi2_ref"], np.nanmin(chi))))
+        chi, pars, _, chig = validate(chi, pars, logs, logq, cfg, workers=workers, data=fitdata, log=log,
+                                      with_grid=True)
+    return dict(result, chi2=chi, chi2_grid=chig, pars=pars, chi2_ref=float(min(result["chi2_ref"], np.nanmin(chi))))
 
 
 def _alpha_minima_point(ls, lq, x0, cfg, n_alpha, tol_alpha):
@@ -910,11 +930,12 @@ def alpha_profile(previous, data, logs, alphas, best=None, cfg=None, workers=Non
                 if np.isfinite(c) and np.all(np.isfinite(p)):
                     known.append((p, c))
         elif np.ndim(r["chi2"]) == 2:
+            cg = r.get("chi2_grid", r["chi2"])                         # the scale of the fits here (grid settings)
             for i, ls_ in enumerate(r["logs"]):
                 for j, lq_ in enumerate(r["logq"]):
                     p = r["pars"][i, j]
-                    if np.isfinite(r["chi2"][i, j]) and np.all(np.isfinite(p)):
-                        known.append((np.array([p[0], p[1], p[2], ls_, lq_, p[3], p[4]]), r["chi2"][i, j]))
+                    if np.isfinite(cg[i, j]) and np.all(np.isfinite(p)):
+                        known.append((np.array([p[0], p[1], p[2], ls_, lq_, p[3], p[4]]), cg[i, j]))
         else:
             for x, c in zip(r["x"], r["chi2"]):
                 if np.isfinite(c) and np.all(np.isfinite(x)):

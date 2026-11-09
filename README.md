@@ -56,8 +56,8 @@ computes a map in stages:
 3. **Neighbour refinement.** Solutions propagate from point to point, for both the resolved and the unresolved
    source branch, until no point improves by more than 1.
 4. **Outlier recalculation.** Points worse than their neighbours get a deep search with many starts.
-5. **Validation.** Every point's χ² is checked with tight magnification settings; values that were too low are
-   corrected and those points refitted, so the map shows exact χ² values (within about 1).
+5. **Validation.** Every point's χ² is recomputed with tight magnification settings and stored, so the whole map
+   is on one exact χ² scale; points whose grid value was too low are also refitted.
 6. **Densification** (optional) to finer lattices, or **finer cells** only where a Δχ² band edge runs between
    cells.
 

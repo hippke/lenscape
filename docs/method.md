@@ -68,9 +68,14 @@ mostly start from their neighbours' solutions instead.
    map settings compute magnifications to ~10⁻³, but where a point's light curve crosses caustics many times the
    χ² error accumulates: on KMT-2025-BLG-1616 the grid-settings values of a 2× zoom were up to 44 below the exact χ²
    of their own solutions, and a fit can settle where the grid value is too low. Every point's solution is
-   re-evaluated once at the tight settings; a point more than `validate_gap` (1) above its map value takes the tight
-   value and is refitted at the refine settings from its own and its neighbours' solutions. Afterwards all map
-   values lie within about 1 of the exact χ² (that map: 28 of 527 points better by > 1, none worse; ~15 % CPU).
+   re-evaluated once at the tight settings, and these values become the map values everywhere, so that the whole
+   map is on one scale; a point more than `validate_gap` (1) above its grid value is also refitted at the refine
+   settings from its own and its neighbours' solutions (that map: 28 of 527 points better by > 1, none worse;
+   ~15 % CPU). The grid-settings values of the final solutions are kept as `chi2_grid`: later stages (`densify`,
+   `polish`) fit with the grid settings and compare against those. Replacing only the values that were too low, as
+   a first version did, left a patchwork where the two settings differ by about the gap: on the KMT-2025-BLG-1616
+   resonant valleys (grid and tight 0.7-1.0 apart) 30-50 % of the values were tight and the rest grid values,
+   neighbours up to ~1 apart in scale.
 
 ## Finer maps
 

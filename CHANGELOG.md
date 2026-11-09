@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Fix: `maps.validate` left a map on two χ² scales. It replaced only the values more than `validate_gap` below the
+  tight χ² of their solutions and kept the grid-settings values elsewhere; where the two settings differ by about the
+  gap, that is a patchwork (KMT-2025-BLG-1616 resonant valleys, Zang's full-season data: 442 of 1216 values replaced
+  on a 64× valley box, |tight − grid| median 0.9, neighbouring values up to ~1 apart in scale). The tight values,
+  computed for every point anyway, are now the map values everywhere; the grid-settings values of the same solutions
+  are kept as `chi2_grid`, which `densify`, `polish`, `refine` and `alpha_profile` use for their fits' comparisons
+  (`chi2` where a stored map lacks it). The refits of the points that were too low are unchanged; the further
+  validation rounds found nothing and are gone (`validate` has no `rounds` argument; `with_grid=True` also returns
+  the grid values). `chi2_ref` of a validated map is on the tight scale. The example notebooks are not rerun.
 - Fix: results depended on whether numba compiled a kernel or loaded it from its cache, and in which order. numba
   keeps a copy of a kernel in every caller and optimises each again; under the fastmath flag `reassoc` the copies
   rounded differently (the same light curves came out with three different bit patterns across load orders), and the
@@ -14,9 +23,9 @@
   The grid-settings χ² of a map point's solution can be off by tens: on KMT-2025-BLG-1616 (2x zoom, 527 points) the
   map values were up to 44 below the exact χ² of their own solutions (95th percentile 14.8), mostly along the s = 1
   row, and a fit can settle where the grid value is too low. Every point's solution is now re-evaluated with
-  `config.TIGHT_BACKEND`; where that is more than `validate_gap` above the map value, the tight value replaces it and
-  the point is refitted at refine settings from its own and its neighbours' solutions (kept if its tight χ² is
-  lower; up to three rounds). Same map: 93 points replaced, 28 better by > 1 (2 by > 10), none worse, all values
+  `config.TIGHT_BACKEND` and these values are stored (see the fix above); where one is more than `validate_gap`
+  above the grid value, the point is refitted at refine settings from its own and its neighbours' solutions (kept
+  if its tight χ² is lower). Same map: 93 points replaced, 28 better by > 1 (2 by > 10), none worse, all values
   within 1 of the exact χ². Cost about +15 % of a densify (that map: 364 s on 8 cores, the densify 846 s on 20
   threads). `validate=False` restores
   the previous behaviour. The example notebooks were computed before this change and are not rerun: their map values
