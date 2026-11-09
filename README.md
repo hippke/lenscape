@@ -7,6 +7,8 @@
 
 **Fast, high-resolution Δχ² maps of binary-lens microlensing events.**
 
+Paper: [Hippke 2026, *Research Notes of the AAS* 10, 312](https://iopscience.iop.org/article/10.3847/2515-5172/aebb99) (doi:[10.3847/2515-5172/aebb99](https://doi.org/10.3847/2515-5172/aebb99))
+
 Planetary microlensing light curves often admit several degenerate binary-lens interpretations. To find them,
 analyses compute Δχ² maps over the binary-lens separation *s* and mass ratio *q*: at every point of the map, the
 remaining parameters (*t*<sub>0</sub>, *u*<sub>0</sub>, *t*<sub>E</sub>, *α*, *ρ*) are fitted to the light curve,
@@ -97,4 +99,22 @@ All my repositories embrace collaboration between humans and AI. Contributions a
 
 ## Citing
 
-If you use `lenscape`, please cite the accompanying research note (in preparation). See [`CITATION.cff`](https://github.com/hippke/lenscape/blob/main/CITATION.cff).
+If you use `lenscape`, please cite the accompanying research note:
+
+> Hippke, M. 2026, "lenscape: Fast, High-resolution Δχ² Maps of Microlensing Events", *Research Notes of the AAS*, 10, 312, [doi:10.3847/2515-5172/aebb99](https://doi.org/10.3847/2515-5172/aebb99)
+
+```bibtex
+@article{Hippke2026lenscape,
+  author  = {Hippke, Michael},
+  title   = {lenscape: Fast, High-resolution $\Delta\chi^2$ Maps of Microlensing Events},
+  journal = {Research Notes of the AAS},
+  year    = {2026},
+  volume  = {10},
+  number  = {11},
+  pages   = {312},
+  doi     = {10.3847/2515-5172/aebb99},
+  url     = {https://iopscience.iop.org/article/10.3847/2515-5172/aebb99}
+}
+```
+
+See also [`CITATION.cff`](https://github.com/hippke/lenscape/blob/main/CITATION.cff).

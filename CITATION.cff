@@ -4,6 +4,7 @@ title: "lenscape: fast, high-resolution Delta chi2 maps of microlensing events"
 authors:
   - family-names: "Hippke"
     given-names: "Michael"
+    orcid: "https://orcid.org/0000-0002-0794-6339"
 version: "1.0"
 license: GPL-3.0-or-later
 repository-code: "https://github.com/hippke/lenscape"
@@ -13,5 +14,11 @@ preferred-citation:
   authors:
     - family-names: "Hippke"
       given-names: "Michael"
+      orcid: "https://orcid.org/0000-0002-0794-6339"
   year: 2026
-  journal: "Research Notes of the AAS (in preparation)"
+  journal: "Research Notes of the AAS"
+  volume: 10
+  issue: 11
+  start: 312
+  doi: "10.3847/2515-5172/aebb99"
+  url: "https://iopscience.iop.org/article/10.3847/2515-5172/aebb99"
